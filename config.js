@@ -1,6 +1,6 @@
-// Paste your Supabase project URL and public key between the quotes, then save.
-// Supabase dashboard > Project Settings > API (or the "Connect" button).
-//   supabaseUrl : https://xxxxxxxx.supabase.co
-//   supabaseKey : the "anon" public key (starts eyJ...) or the "Publishable" key (starts sb_publishable_...)
+// Supabase connection for Factory Floor (public/publishable key: safe to be in the browser).
 // Leave both empty to run in demo mode (works only between tabs of one browser).
-window.FF_CONFIG = { supabaseUrl: "", supabaseKey: "" };
+window.FF_CONFIG = {
+  supabaseUrl: "https://wonwkmygsntqfwgzdagz.supabase.co",
+  supabaseKey: "sb_publishable_4-NT2nETJVSwhTNxcgC7Rg_Rw0gYM3O"
+};
