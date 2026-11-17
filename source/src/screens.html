@@ -1,0 +1,75 @@
+<div id="net" class="net">Connection lost. Retrying…</div>
+
+<div id="login" class="screen page"><div class="wrap">
+  <h1 class="brand">Factory <span>Floor</span></h1>
+  <p class="sub" id="loginSub">Sign in to play</p>
+  <form class="card2" id="loginForm" autocomplete="off">
+    <label id="lbEmail">College id<input id="inEmail" type="email" inputmode="email" placeholder="name@ibsindia.org" autocapitalize="off" spellcheck="false"></label>
+    <label><span id="lbPass">Password</span><input id="inPass" type="password" placeholder="Password"></label>
+    <button class="btn hz big" id="loginGo" type="submit">Join game</button>
+    <div class="err" id="loginErr" role="alert"></div>
+  </form>
+  <div class="links"><a id="roleAdmin">Admin</a><a id="roleGm">Game Master</a><a id="rolePlayer" style="display:none">Back to player login</a></div>
+  <p class="hint" style="text-align:center;margin-top:18px" id="modeNote"></p>
+</div></div>
+
+<div id="join" class="screen page"><div class="wrap">
+  <h1 class="brand">Factory <span>Floor</span></h1>
+  <p class="sub">Signed in as <b id="joinId"></b></p>
+  <form class="card2" id="joinForm" autocomplete="off">
+    <label>Your name<input id="inName" type="text" placeholder="Full name" maxlength="40"></label>
+    <label id="lbTeam">Team<select id="inTeam"></select></label>
+    <button class="btn hz big" type="submit">Continue</button>
+    <div class="err" id="joinErr" role="alert"></div>
+  </form>
+  <div class="links"><a id="joinOut">Not you? Sign out</a></div>
+</div></div>
+
+<div id="wait" class="screen page"><div class="wrap waitbox">
+  <div class="spin" id="waitSpin"></div>
+  <h2 id="waitH"></h2>
+  <p id="waitP"></p>
+  <div id="waitCard" style="margin-top:18px"></div>
+  <div style="margin-top:18px" id="waitWho"></div>
+  <div class="links"><a id="waitOut">Sign out</a></div>
+</div></div>
+
+<div id="admin" class="screen page"><div class="admin">
+  <div class="hd"><h1>Admin console</h1><span class="pill" id="adConn"></span><span class="pill" id="adPhase"></span><span style="flex:1"></span>
+    <button class="btn hz" id="adExport">Export results (Excel)</button><button class="btn" id="adOut">Sign out</button></div>
+
+  <div class="sec" id="secSetup"><h2>1 · Game setup</h2>
+    <div class="g3">
+      <label class="f">Seed (decides the floors)<input id="adSeed" type="text"></label>
+      <label class="f">Rounds (5 to 10)<select id="adRounds"></select></label>
+      <label class="f">Floors in the pool<input id="adPool" type="number" min="5" max="20"></label>
+      <label class="f">Players per team<input id="adPpt" type="number" min="1" max="8"></label>
+    </div>
+    <label class="f" id="adTeamsBox">Team names (one per line). Players pick their team from this list.<textarea id="adTeams" placeholder="Team Alpha&#10;Team Beta"></textarea></label>
+    <div class="row2"><button class="btn hz" id="adSave">Save setup</button><span class="hint" id="adSaveMsg"></span></div>
+    <p class="hint">With one player per team there is no team list: each player is their own team. Team score is the average of its members' scores. Seed and floors lock once round 1 starts.</p>
+  </div>
+
+  <div class="sec" id="secRound"><h2 id="adRoundH">2 · Rounds</h2>
+    <div id="adRoundBody"></div>
+  </div>
+
+  <div class="sec"><h2>3 · Players <span class="pill" id="adCount"></span></h2>
+    <div style="overflow:auto"><table id="adPlayers"></table></div>
+  </div>
+
+  <div class="sec"><h2>4 · Links and reset</h2>
+    <p class="hint">Players open the game page and log in with their college id. The Game Master opens the same page and chooses “Game Master”.</p>
+    <div class="row2"><button class="btn" id="adReset">Reset whole game</button><span class="hint" id="adResetMsg"></span></div>
+  </div>
+</div></div>
+
+<div id="gm" class="screen">
+  <div class="gmtop">
+    <div class="tabs"><button data-tab="sb" class="on">Scoreboard</button><button data-tab="lv">Live build</button><button data-tab="lay">Layouts</button></div>
+    <div class="sp"></div><span id="gmRound" style="font-size:18px;color:var(--ink2)"></span>
+    <div class="gmtimer" id="gmTimer"><small id="gmTL">Timer</small><b id="gmTC">--:--</b></div>
+    <button class="btn" id="gmOut">Sign out</button></div>
+  <div class="gmbar" id="gmBar">The admin is setting up the game. It will resume shortly.</div>
+  <div class="gmbody" id="gmBody"></div>
+</div>
