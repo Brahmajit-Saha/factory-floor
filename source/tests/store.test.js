@@ -1,12 +1,12 @@
 const fs=require('fs'),vm=require('vm'); const {start}=require('./fakefb.js');
 globalThis.window={addEventListener(){}}; globalThis.location={search:''};
-const store={};
+const store={}; const {makeBackend}=require('./fakesb.js');
 let ls={}; globalThis.localStorage={getItem:k=>ls[k]===undefined?null:ls[k],setItem:(k,v)=>{ls[k]=String(v);}};
-vm.runInThisContext(fs.readFileSync(__dirname+'/../src/store.js','utf8')+';globalThis.__S={MemoryStore,FirebaseStore,setIn,getIn,prune}');
+vm.runInThisContext(fs.readFileSync(__dirname+'/../src/store.js','utf8')+';globalThis.__S={MemoryStore,FirebaseStore,SupabaseStore,setIn,getIn,prune}');
 let ok=0,bad=0; const t=(c,m)=>{ if(c)ok++; else{bad++;console.log('FAIL',m);} };
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 (async()=>{
-  const {MemoryStore,FirebaseStore,setIn,getIn}=globalThis.__S;
+  const {MemoryStore,FirebaseStore,SupabaseStore,setIn,getIn}=globalThis.__S;
   // tree helpers follow Firebase rules
   let tr={}; tr=setIn(tr,'a/b/c',1); t(JSON.stringify(tr)==='{"a":{"b":{"c":1}}}','setIn nested'); tr=setIn(tr,'a/b/c',null); t(JSON.stringify(tr)==='{}','null removes and prunes empties '+JSON.stringify(tr));
   tr=setIn({},'x',{p:1,q:null,r:{}}); t(JSON.stringify(tr)==='{"x":{"p":1}}','prune inside values');
@@ -14,7 +14,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await st.ready();
     await st.set('players/a',{name:'Asha',n:1}); t((await st.get('players/a')).name==='Asha',name+' set/get');
     await st.update('players/a',{n:2,'extra/deep':'x'}); const a=await st.get('players/a'); t(a.n===2&&a.extra.deep==='x'&&a.name==='Asha',name+' update merges, multi-path '+JSON.stringify(a));
-    const seen=[]; const off=st.on('players',v=>seen.push(v)); await sleep(150);
+    await sleep(60); const seen=[]; const off=st.on('players',v=>seen.push(v)); await sleep(150);
     t(seen.length===1&&seen[0].a.n===2,name+' on() delivers current value first');
     await st.set('players/b',{name:'Bo'}); await sleep(150); t(seen.length>=2&&seen[seen.length-1].b.name==='Bo',name+' on() sees child added');
     await st.update('players/b',{name:'Bob'}); await sleep(150); t(seen[seen.length-1].b.name==='Bob',name+' on() sees patch');
@@ -26,6 +26,10 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     const nowd=Math.abs(st.now()-Date.now()); t(nowd<2000,name+' now() close to local clock '+nowd);
   }
   await exercise('memory',MemoryStore());
+  const be=makeBackend(); const sbA=SupabaseStore('http://x','k',be); await exercise('supabase',sbA);
+  // two supabase clients (separate devices) share the backend; clock offset from rpc
+  const sbB=SupabaseStore('http://x','k',be); const seenB=[]; const offB=sbB.on('game',v=>seenB.push(v)); await sleep(100); await sbA.set('game',{phase:'round',round:3}); await sleep(150); t(seenB[seenB.length-1]&&seenB[seenB.length-1].round===3,'supabase: second device sees write'); await sbA.update('',{'rounds/1':{minutes:5},game:{phase:'setup',round:3}}); await sleep(150); t(seenB[seenB.length-1].phase==='setup','supabase: multi-path update reaches listener'); { const r=await sbB.get('rounds'); t(r&&r['1']&&r['1'].minutes===5,'supabase: get assembles rows under a path'); } offB();
+  be.setNow(()=>Date.now()+7000); await sbB.ready(); t(Math.abs(sbB.now()-Date.now()-7000)<400,'supabase: clock offset from ff_now '+(sbB.now()-Date.now())); be.setNow(()=>Date.now());
   const fb=await start(0).catch(()=>null);
   const srv=await start(38211); const fs1=FirebaseStore(srv.url);
   await exercise('firebase',fs1);

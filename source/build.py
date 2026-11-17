@@ -2,6 +2,7 @@ t=open('src/template.html').read()
 t=t.replace('@@SCREENS@@',open('src/screens.html').read())
 for k,f in [('GEN','gen'),('LOGIC','logic'),('RENDER','render'),('APP','app'),('STORE','store'),('GAME','game'),('XLSX','xlsx'),('VIEW','view'),('SHELL','shell')]:
     t=t.replace('/*%s*/'%k,open('src/%s.js'%f).read())
+t=t.replace('/*SUPABASE*/',open('assets/supabase.umd.js').read())
 import os,base64
 def b64(path,mime):
     return 'data:'+mime+';base64,'+base64.b64encode(open(path,'rb').read()).decode()

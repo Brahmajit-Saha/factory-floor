@@ -96,9 +96,83 @@ function FirebaseStore(baseUrl){
   return api;
 }
 
+/* Supabase back end: one table ff_kv(path text primary key, value jsonb). Each record the game writes is one row;
+   reading a path assembles the rows at, under and above it. Live updates come from Supabase Realtime (one channel per device). */
+function SupabaseStore(url,key,lib){
+  const sb=(lib||window.supabase).createClient(url,key,{auth:{persistSession:false,autoRefreshToken:false}});
+  const T='ff_kv'; let offset=0, online=true; const statusCbs=[], subs=[]; let chan=null, chanUp=false;
+  const setOnline=v=>{ if(online!==v){ online=v; statusCbs.forEach(f=>f(v)); } };
+  const norm=p=>segs(p).join('/');
+  async function run(mk,tries){
+    tries=tries||3; let err;
+    for(let i=0;i<tries;i++){
+      try{ const r=await mk(); if(r.error) throw new Error(r.error.message||String(r.error)); setOnline(true); return r.data; }
+      catch(e){ err=e; if(/does not exist|schema cache|permission denied|JWT|Invalid API key/i.test(e.message)) throw e; setOnline(false); await new Promise(res=>setTimeout(res,300*(i+1))); }
+    }
+    throw err;
+  }
+  const ancestors=p=>{ const s=segs(p), out=[]; for(let i=1;i<s.length;i++) out.push(s.slice(0,i).join('/')); return out; };
+  async function read(p){
+    p=norm(p); const anc=ancestors(p).concat(p?[p]:[]);
+    const jobs=[]; if(anc.length) jobs.push(run(()=>sb.from(T).select('path,value').in('path',anc)));
+    jobs.push(run(()=>p?sb.from(T).select('path,value').like('path',p+'/%'):sb.from(T).select('path,value')));
+    const all=[].concat(...await Promise.all(jobs)); all.sort((a,b)=>segs(a.path).length-segs(b.path).length);
+    let tree={}; for(const r of all) tree=setIn(tree,r.path,r.value); return clone(getIn(tree,p));
+  }
+  async function upsert(rows){ if(rows.length) await run(()=>sb.from(T).upsert(rows,{onConflict:'path'})); }
+  async function del(p){ p=norm(p); if(!p){ await run(()=>sb.from(T).delete().neq('path','')); return; } await run(()=>sb.from(T).delete().eq('path',p)); await run(()=>sb.from(T).delete().like('path',p+'/%')); }
+  function relOf(sub,rowPath){ // 'under' | 'self' | 'above' | null
+    const a=segs(sub), b=segs(rowPath); const n=Math.min(a.length,b.length); for(let i=0;i<n;i++) if(a[i]!==b[i]) return null;
+    return b.length>a.length?'under':b.length===a.length?'self':'above';
+  }
+  function emit(s){ const j=JSON.stringify(s.val===undefined?null:s.val); if(j!==s.last){ s.last=j; s.cb(clone(s.val===undefined?null:s.val)); } }
+  async function refetch(s){ try{ const v=await read(s.path); if(subs.includes(s)){ s.val=v; emit(s); } }catch(e){} }
+  function onChange(m){
+    const del=m.eventType==='DELETE', rec=del?m.old:m.new; if(!rec||typeof rec.path!=='string') return;
+    for(const s of subs.slice()){
+      const rel=relOf(s.path,rec.path); if(!rel) continue;
+      if(rel==='above'){ clearTimeout(s.t); s.t=setTimeout(()=>refetch(s),20); continue; }
+      if(rel==='self'){ s.val=del?null:clone(m.new.value); emit(s); continue; }
+      const sub=segs(rec.path).slice(segs(s.path).length).join('/');
+      let v=(s.val&&typeof s.val==='object')?s.val:{};
+      v=setIn(v,sub,del?null:clone(m.new.value)); s.val=Object.keys(v).length?v:null; emit(s);
+    }
+  }
+  function openChannel(){
+    if(chan) return;
+    chan=sb.channel('ff-live').on('postgres_changes',{event:'*',schema:'public',table:T},onChange).subscribe(st=>{
+      if(st==='SUBSCRIBED'){ const was=chanUp; chanUp=true; setOnline(true); if(was||subs.some(s=>s.fetched)) subs.slice().forEach(refetch); }
+      else if(st==='CHANNEL_ERROR'||st==='TIMED_OUT'||st==='CLOSED'){ chanUp=false; setOnline(false); }
+    });
+  }
+  setInterval(()=>{ if(subs.length&&online) subs.slice().forEach(refetch); },60000);
+  const api={
+    kind:'supabase',
+    async get(p){ return read(p); },
+    async set(p,v){ p=norm(p); v=prune(clone(v)); if(v===null){ await del(p); return; } if(!p){ await del(''); await upsert(Object.keys(v).map(k=>({path:k,value:v[k]}))); return; } await upsert([{path:p,value:v}]); },
+    async update(p,o){
+      p=norm(p);
+      if(!p){ const rows=[], dels=[]; for(const k of Object.keys(o)){ const v=prune(clone(o[k])); if(v===null) dels.push(k); else rows.push({path:norm(k),value:v}); } await upsert(rows); for(const d of dels) await del(d); return; }
+      let cur=await run(()=>sb.from(T).select('value').eq('path',p)); cur=cur&&cur[0]?cur[0].value:{}; if(cur===null||typeof cur!=='object') cur={};
+      for(const k of Object.keys(o)) cur=setIn(cur,k,clone(o[k])); await upsert([{path:p,value:cur}]);
+    },
+    async remove(p){ await del(p); },
+    on(p,cb){ const s={path:norm(p),cb,val:undefined,last:undefined,t:null,fetched:false}; subs.push(s); openChannel(); refetch(s).then(()=>{ s.fetched=true; if(s.last===undefined){ s.val=null; emit(s); } }); return ()=>{ const i=subs.indexOf(s); if(i>=0) subs.splice(i,1); clearTimeout(s.t); }; },
+    now(){ return Date.now()+offset; },
+    async ready(){
+      await run(()=>sb.from(T).select('path').limit(1),2).catch(e=>{ throw new Error(/does not exist|schema cache/i.test(e.message)?'The game table is missing in Supabase. Run the SQL from SETUP.md first.':e.message); });
+      const samples=[]; for(let i=0;i<3;i++){ const t0=Date.now(); const r=await sb.rpc('ff_now'); const t1=Date.now(); if(!r.error&&typeof r.data==='number') samples.push({rtt:t1-t0,off:r.data-(t0+t1)/2}); else if(!r.error&&r.data!=null&&!isNaN(+r.data)) samples.push({rtt:t1-t0,off:+r.data-(t0+t1)/2}); }
+      if(samples.length){ samples.sort((a,b)=>a.rtt-b.rtt); offset=Math.round(samples[0].off); }
+      openChannel(); return true;
+    },
+    status(cb){ statusCbs.push(cb); return ()=>{ const i=statusCbs.indexOf(cb); if(i>=0) statusCbs.splice(i,1); }; }
+  };
+  return api;
+}
+
 function createStore(){
   let dbUrl=null;
   try{ const q=new URLSearchParams(location.search); if(q.get('demo')==='1') return MemoryStore(); dbUrl=q.get('db'); }catch(e){}
-  try{ if(!dbUrl&&window.FF_CONFIG&&window.FF_CONFIG.databaseURL) dbUrl=window.FF_CONFIG.databaseURL; }catch(e){}
+  try{ const c=window.FF_CONFIG||{}; if(c.supabaseUrl&&c.supabaseKey&&window.supabase) return SupabaseStore(c.supabaseUrl,c.supabaseKey); if(!dbUrl&&c.databaseURL) dbUrl=c.databaseURL; }catch(e){}
   return dbUrl?FirebaseStore(dbUrl):MemoryStore();
 }
