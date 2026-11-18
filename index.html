@@ -33,6 +33,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 #ctxline{color:var(--ink2);font-size:12px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .btn{height:36px;padding:0 14px;border:1px solid var(--line);border-radius:12px;background:transparent;font-weight:600}
 .btn:hover{border-color:var(--brand);background:rgba(143,107,255,.14)} .btn[disabled]{opacity:.4;cursor:default}
+.btn.sel{background:#c93b2a;color:#fff;border-color:transparent}.btn.sel:hover{background:#d84a38;border-color:transparent}
 .btn.hz{background:var(--brand);color:#fff;border-color:transparent;font-weight:700}.btn.hz:hover{background:var(--brand2);border-color:transparent}
 .bars{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
 .bar{position:relative;height:30px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);overflow:hidden}
@@ -96,6 +97,8 @@ details{margin-top:12px;font-size:13px;color:var(--ink2)} details summary{cursor
 .card .n{position:absolute;right:8px;bottom:6px;font-size:12px;color:var(--hazard);font-weight:700}
 .ctl{display:flex;gap:6px;margin-left:auto;align-items:center}
 .ctl small{color:var(--ink2)}
+.dockctl .btn{white-space:nowrap}
+@media(max-width:700px){.dockctl{flex-wrap:wrap;justify-content:flex-end;margin-left:0;width:100%}.dockctl .btn{height:34px;padding:0 10px;font-size:13px}}
 #delSel:not([disabled]){border-color:var(--bad);color:#ffb3c0}
 #timer{display:flex;align-items:baseline;gap:8px;margin-left:auto;padding:4px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
 #timer small{color:var(--ink2);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
@@ -497,9 +500,11 @@ body.demo #hdrT{display:none}
       <button class="card" data-type="SM"><i style="background:#b08556"></i><b>Medium</b><span>5×3 · holds 75</span><em>₹1,000</em><div class="n"></div></button>
       <button class="card" data-type="SL"><i style="background:#c49a64"></i><b>Large</b><span>5×5 · holds 150</span><em>₹1,800</em><div class="n"></div></button>
     </div></div>
-    <div class="ctl">
+    <div class="ctl dockctl">
       <button class="btn" id="rot">Rotate ↻</button><small id="rotInfo">0°</small>
       <button class="btn" id="delSel" title="Tap a piece on the floor, then press Remove">Remove</button>
+      <button class="btn" id="selArea" title="Drag a box over the floor to pick several pieces, then delete them together">Select area</button>
+      <button class="btn" id="delMulti" disabled title="Delete every piece you picked with Select area (Undo brings them back)">Delete selected</button>
       <button class="btn" id="undo">Undo</button>
       <button class="btn" id="clear">Clear</button>
     </div>
@@ -1563,7 +1568,7 @@ const S={
   tOver:null, bOver:null,
   pool:null, poolKey:'', auto:null, floor:null, ctx:null, rows:null,
   target:0, budget:0, m:0.6, need:0,
-  items:[], nextId:1, undo:[], sel:null, drag:null, paint:null, armed:null, trayRot:0,
+  items:[], nextId:1, undo:[], sel:null, multi:new Set(), selMode:false, drag:null, paint:null, armed:null, trayRot:0,
   V:{mode:'iso',zoom:1,px:0,py:0,rot:0}, an:null, dirty:true, W:0, H:0, dpr:1,
   fx:fxEnabled(), t:0, born:new Map(), puffs:[], prev:new Map(), fxUntil:0, fxArm:false
 };
@@ -1576,7 +1581,7 @@ const locked=()=>LOCK;
 function setClock(label,clock,cls){ $('tLabel').textContent=label; $('tClock').textContent=clock; $('timer').className=cls||''; }
 function setLock(on,over){ // over: null or {title,html} shown as an overlay on the floor
   const was=LOCK; LOCK=!!on; OVER=on?over||null:null;
-  if(LOCK&&!was){ S.armed=null; S.paint=null; S.drag=null; S.sel=null; pend=null; pan=null; }
+  if(LOCK&&!was){ S.armed=null; S.paint=null; S.drag=null; S.sel=null; S.selMode=false; S.multi.clear(); sbox=null; pend=null; pan=null; }
   if(!LOCK||(OVER&&OVER.title!==showOverlay.last)) showOverlay.dismissed=false; showOverlay.last=OVER?OVER.title:null;
   const o=$('timesup'); if(OVER&&!showOverlay.dismissed){ $('tuTitle').textContent=OVER.title; $('tuBody').innerHTML=OVER.html; o.querySelector('.box').className='box '+(OVER.cls||''); o.classList.add('on'); } else o.classList.remove('on');
   S.dirty=true; if(S.an){ updateTray(); }
@@ -1607,7 +1612,7 @@ function loadFloor(keepView){
   S.m=roundM(S.seed,S.round,S.cfg);
   S.need=needSpace(FACTORIES[S.fi],S.target,S.m);
   S.nextId=S.items.reduce((a,i)=>Math.max(a,i.id),0)+1;
-  S.undo=[]; S.sel=null; S.drag=null; S.paint=null; S.armed=null;
+  S.undo=[]; S.sel=null; S.multi.clear(); sbox=null; S.drag=null; S.paint=null; S.armed=null;
   if(!keepView){ resize(); fitView(S.V,S.rows,S.W,S.H); focusIn(); }
   refresh();
 }
@@ -1693,6 +1698,7 @@ function updateTray(){
   });
   $('rotInfo').textContent=(S.trayRot*90)+'°';
   $('undo').disabled=!S.undo.length;
+  multiPrune(); selPaint();
 }
 
 /* ---------- selected piece bubble ---------- */
@@ -1724,6 +1730,7 @@ function frame(now){
   if(S.dirty&&S.rows){ S.dirty=false;
     const ghost=S.drag&&S.drag.cand?{item:S.drag.cand,ok:S.drag.ok,reason:S.drag.ok?'':S.drag.reason}:null;
     drawScene(c,S.V,S.W,S.H,{rows:S.rows,items:S.items,cfg:S.cfg,an:S.an,ctx:S.ctx,sel:S.sel,ghost,paintCells:S.paint?S.paint.cells:null,dpr:S.dpr,anim:S.anim||0,play:S.play,t:S.t,fx:S.fx,run:S.run,born:S.born,puffs:S.puffs});
+    if(S.selMode||S.multi.size||sbox) drawMulti();
     updateBubble();
   }
   requestAnimationFrame(frame);
@@ -1776,6 +1783,47 @@ function rotateSel(){
 }
 function removeSel(){ if(locked()) return; const it=selItem(); if(!it) return; snapshot(); S.items=S.items.filter(i=>i.id!==it.id); S.sel=null; commit(); }
 $('delSel').onclick=()=>removeSel();
+
+/* ---------- select an area, then delete everything in it at once ---------- */
+let sbox=null; // the box being dragged: {id,a,b,add,moved} with a and b in floor coordinates
+function multiPrune(){ for(const id of [...S.multi]) if(!S.items.some(i=>i.id===id)) S.multi.delete(id); }
+function selPaint(){
+  const on=S.selMode&&!locked(), n=S.multi.size;
+  $('selArea').classList.toggle('sel',on); $('selArea').textContent=on?'Selecting…':'Select area'; $('selArea').disabled=locked();
+  $('delMulti').disabled=locked()||!n; $('delMulti').textContent=n?'Delete '+n+' selected':'Delete selected';
+  if(on) cv.style.cursor='crosshair'; else if(cv.style.cursor==='crosshair') cv.style.cursor='';
+}
+function setSelMode(on){
+  S.selMode=!!on&&!locked();
+  if(S.selMode){ S.sel=null; S.armed=null; S.paint=null; updateTray(); if(!S.tipArea){ S.tipArea=1; toast('Drag a box over the floor to pick pieces, then press Delete selected. Tap a piece to add or drop it.',4200); } }
+  else { S.multi.clear(); sbox=null; }
+  selPaint(); updateBubble(); S.dirty=true;
+}
+function boxCells(b){ const cl=v=>Math.max(0,Math.min(N-1,Math.floor(v))); return {x0:cl(Math.min(b.a[0],b.b[0])),x1:cl(Math.max(b.a[0],b.b[0])),y0:cl(Math.min(b.a[1],b.b[1])),y1:cl(Math.max(b.a[1],b.b[1]))}; }
+function itemsIn(r){ // ids of every piece with at least one cell inside the box
+  const out=[]; for(const it of S.items){ for(const p of parts(it,S.cfg.pieces[it.type])) if(p.x>=r.x0&&p.x<=r.x1&&p.y>=r.y0&&p.y<=r.y1){ out.push(it.id); break; } } return out;
+}
+function finishSelBox(b,sx,sy){
+  if(b.moved){ if(!b.add) S.multi.clear(); for(const id of itemsIn(boxCells(b))) S.multi.add(id); if(!S.multi.size) toast('No pieces in that box'); }
+  else { const it=itemAt(sx,sy); if(it){ if(S.multi.has(it.id)) S.multi.delete(it.id); else S.multi.add(it.id); } else if(!b.add) S.multi.clear(); }
+  selPaint(); S.dirty=true;
+}
+function removeMulti(){
+  if(locked()||!S.multi.size) return; const ids=S.multi, n=ids.size;
+  snapshot(); S.items=S.items.filter(i=>!ids.has(i.id)); S.multi=new Set(); S.sel=null; commit(); toast('Removed '+n+' piece'+(n>1?'s':'')+'. Undo brings them back.',2800);
+}
+function drawMulti(){
+  const V=S.V; c.setTransform(S.dpr,0,0,S.dpr,0,0);
+  let live=null, r=null;
+  if(sbox&&sbox.moved){ r=boxCells(sbox); live=new Set(itemsIn(r));
+    poly(c,[P(V,r.x0,r.y0),P(V,r.x1+1,r.y0),P(V,r.x1+1,r.y1+1),P(V,r.x0,r.y1+1)],'rgba(255,90,70,.16)',null);
+    c.save(); c.setLineDash([7,5]); c.lineWidth=2; c.strokeStyle='#ff6a55'; c.beginPath(); [[r.x0,r.y0],[r.x1+1,r.y0],[r.x1+1,r.y1+1],[r.x0,r.y1+1]].forEach(([x,y],i)=>{ const q=P(V,x,y); i?c.lineTo(q[0],q[1]):c.moveTo(q[0],q[1]); }); c.closePath(); c.stroke(); c.restore(); }
+  const all=new Set(S.multi); if(live) for(const id of live) all.add(id);
+  for(const it of S.items) if(all.has(it.id)){ c.lineWidth=2.5; for(const q of parts(it,S.cfg.pieces[it.type])) poly(c,[P(V,q.x,q.y),P(V,q.x+1,q.y),P(V,q.x+1,q.y+1),P(V,q.x,q.y+1)],'rgba(255,90,70,.3)','#ff6a55'); c.lineWidth=1; }
+  if(r){ const q=P(V,(r.x0+r.x1+1)/2,r.y0,0); pill(c,all.size+' selected',q[0],q[1]-12,'#c93b2a','#fff',Math.max(10,11*V.zoom)); }
+}
+$('selArea').onclick=()=>{ if(locked()){ toast('The floor is locked right now'); return; } setSelMode(!S.selMode); };
+$('delMulti').onclick=()=>removeMulti();
 function doRotate(){
   if(locked()) return;
   if(S.drag){ S.drag.rot=(S.drag.rot+1)%4; updateCand(S.drag,S.drag.cx,S.drag.cy); S.dirty=true; return; }
@@ -1812,6 +1860,7 @@ document.querySelectorAll('.card').forEach(el=>{
   el.addEventListener('pointerdown',e=>{
     if(e.button>0) return; e.preventDefault();
     if(locked()){ toast('The floor is locked right now'); return; }
+    if(S.selMode) setSelMode(false);
     const type=el.dataset.type;
     S.drag={kind:'new',type,rot:S.trayRot,touch:e.pointerType==='touch',sx:e.clientX,sy:e.clientY,moved:false,cand:null,ok:false,reason:'',id:e.pointerId};
     window.addEventListener('pointermove',onWinMove); window.addEventListener('pointerup',onWinUp); window.addEventListener('pointercancel',onWinUp);
@@ -1856,8 +1905,9 @@ function itemAt(sx,sy){
 cv.addEventListener('pointerdown',e=>{
   if(e.target!==cv) return; cv.setPointerCapture(e.pointerId);
   const [x,y]=localXY(e); ptrs.set(e.pointerId,{x,y,sx:x,sy:y,t:Date.now(),touch:e.pointerType==='touch'});
-  if(ptrs.size===2){ const [a,b]=[...ptrs.values()]; pinch={d:Math.hypot(a.x-b.x,a.y-b.y),z:S.V.zoom,a:Math.atan2(b.y-a.y,b.x-a.x)}; pan=null; pend=null; rotDrag=null; S.paint=null; S.dirty=true; return; }
+  if(ptrs.size===2){ const [a,b]=[...ptrs.values()]; pinch={d:Math.hypot(a.x-b.x,a.y-b.y),z:S.V.zoom,a:Math.atan2(b.y-a.y,b.x-a.x)}; pan=null; pend=null; rotDrag=null; sbox=null; S.paint=null; S.dirty=true; return; }
   if(ptrs.size>2) return;
+  if(S.selMode&&!locked()&&e.button===0&&!e.shiftKey){ const g=unP(S.V,x,y); sbox={id:e.pointerId,a:g,b:g,add:e.ctrlKey||e.metaKey,moved:false}; S.dirty=true; return; }
   if(e.shiftKey){ rotDrag={id:e.pointerId,x,acc:0}; return; } // Shift + drag sideways turns the view
   const hit=locked()?null:itemAt(x,y);
   if(S.armed==='BC'&&e.button===0&&!locked()&&!hit){ paintStart(x,y,e.pointerType==='touch',e.pointerId,'canvas'); return; }
@@ -1867,9 +1917,10 @@ cv.addEventListener('pointerdown',e=>{
 });
 cv.addEventListener('pointermove',e=>{
   const p=ptrs.get(e.pointerId);
-  if(!p){ if(e.pointerType==='mouse'&&!S.drag){ const [hx,hy]=localXY(e); cv.style.cursor=(!locked()&&itemAt(hx,hy))?'grab':''; } return; }
+  if(!p){ if(e.pointerType==='mouse'&&!S.drag){ const [hx,hy]=localXY(e); cv.style.cursor=S.selMode?'crosshair':(!locked()&&itemAt(hx,hy))?'grab':''; } return; }
   const [x,y]=localXY(e); p.x=x; p.y=y;
   if(rotDrag&&rotDrag.id===e.pointerId){ rotDrag.acc+=x-rotDrag.x; rotDrag.x=x; if(Math.abs(rotDrag.acc)>70){ rotateView(rotDrag.acc>0?1:-1); rotDrag.acc=0; } return; }
+  if(sbox&&sbox.id===e.pointerId){ sbox.b=unP(S.V,x,y); if(Math.hypot(x-p.sx,y-p.sy)>6) sbox.moved=true; S.dirty=true; return; }
   if(pinch&&ptrs.size===2){ const [a,b]=[...ptrs.values()]; const nd=Math.hypot(a.x-b.x,a.y-b.y); zoomAt((a.x+b.x)/2,(a.y+b.y)/2,pinch.z*nd/pinch.d,true);
     let da=Math.atan2(b.y-a.y,b.x-a.x)-pinch.a; while(da>Math.PI) da-=2*Math.PI; while(da<-Math.PI) da+=2*Math.PI;
     if(Math.abs(da)>0.8){ rotateView(da>0?1:-1); pinch.a+=da; } return; }
@@ -1889,6 +1940,7 @@ function endPtr(e){
   if(rotDrag&&rotDrag.id===e.pointerId){ rotDrag=null; return; }
   if(pinch){ if(ptrs.size<2) pinch=null; pan=null; pend=null; return; }
   const [x,y]=localXY(e);
+  if(sbox&&sbox.id===e.pointerId){ const bx=sbox; sbox=null; if(e.type==='pointerup') finishSelBox(bx,x,y); S.dirty=true; return; }
   if(S.paint&&S.paint.src==='canvas'&&S.paint.id===e.pointerId){ if(e.type==='pointercancel') S.paint=null; paintCommit(); return; }
   if(S.drag&&S.drag.kind==='move'&&S.drag.id===e.pointerId){ onMoveDrop(e); return; }
   if(pend&&pend.id===e.pointerId){ S.sel=pend.it.id; pend=null; updateBubble(); S.dirty=true; return; }
@@ -1941,8 +1993,8 @@ window.addEventListener('keydown',e=>{
   if(e.key==='r'||e.key==='R') doRotate();
   else if(e.key==='q'||e.key==='Q') rotateView(-1);
   else if(e.key==='e'||e.key==='E') rotateView(1);
-  else if(e.key==='Delete'||e.key==='Backspace') { removeSel(); }
-  else if(e.key==='Escape'){ S.paint=null; S.armed=null; S.sel=null; if(S.drag&&S.drag.kind==='new'){ S.drag=null; } updateTray(); updateBubble(); S.dirty=true; }
+  else if(e.key==='Delete'||e.key==='Backspace') { if(S.multi.size) removeMulti(); else removeSel(); }
+  else if(e.key==='Escape'){ if(S.selMode){ if(S.multi.size){ S.multi.clear(); sbox=null; selPaint(); } else setSelMode(false); } S.paint=null; S.armed=null; S.sel=null; if(S.drag&&S.drag.kind==='new'){ S.drag=null; } updateTray(); updateBubble(); S.dirty=true; }
   else if((e.ctrlKey||e.metaKey)&&e.key==='z'){ $('undo').click(); e.preventDefault(); }
 });
 $('scoreBtn').onclick=()=>{ $('side').classList.toggle('open'); setTimeout(()=>{ resize(); S.dirty=true; },30); };
@@ -2899,7 +2951,7 @@ const RULES=[
  {t:'Belts',b:['A belt is <b>motor, connectors, motor</b>. Each motor has a <b>blue</b> end where material goes in and a <b>green</b> end where it comes out; the arrow shows the way.','First motor: its blue end touches the upstream machine or bay and its green end joins the connectors. Second motor: blue end joins the connectors, green end touches the downstream machine or bay.','A complete belt shows arrows on its connectors and gives <b>+10%</b> to every machine touching a motor (max +30%).','Two belts may not touch, corners included. Keep one empty cell between them.','<b>Limits:</b> one machine takes at most 2 belts in and 2 belts out; one storage unit takes 3 in and 3 out. An extra belt is ignored and outlined in red.','More belts do not add speed: they only give a piece more places to share its output with.'],tip:'Tip: tap the Connector card, then drag across the floor to lay a line. One Undo removes the whole line.'},
  {t:'Storage and trucks',b:['Storage and the line <b>start empty</b> when the round starts. A delivery truck brings raw material every 60 seconds; a shipping truck collects finished goods one interval later. The game master can change the interval or send extra trucks.','Put storage between the inbound bay and the RM Processor for raw material, and between the Packer and the outbound bay for finished goods. Touch it, or join it with a complete belt; arrows show the flow.','A unit only counts if it sits in that flow. If storage is full, the truck turns material away.','<b>Joined storage:</b> two storage units that share a full side (at least 2 cells long, not just a corner or one cell) and do the same job (both raw material, or both finished goods) act as <b>one big unit</b>. Their space is pooled, they share one bar, and the belt limit adds up (2 units: 6 in, 6 out). Raw-material and finished-goods units never join.','Watch the storage bars and trucks on the floor as the clock runs. Total capacity should cover the space your deliveries need (see “Deliveries and space needed”).']},
  {t:'Budget and aisle',b:['Spending is capped by the round budget.','Keep an open aisle from the IN bay to the OUT bay.','Cheaper builds score better, as long as the target is still reached.']},
- {t:'Move and turn',b:['<b>Move a piece:</b> press it and drag. Drop it on a free spot, or on the cards at the bottom to remove it. Works any time the floor is open.','<b>Remove:</b> tap a piece, then press Remove (or the Delete key).','<b>Turn a piece:</b> select it and press Rotate (or R).','<b>Turn the whole floor</b> to see behind tall machines: the ⟲ ⟳ buttons, the Q and E keys, Shift + drag, or twist two fingers on a phone.','Pinch or scroll to zoom. Drag empty floor to pan.']},
+ {t:'Move and turn',b:['<b>Move a piece:</b> press it and drag. Drop it on a free spot, or on the cards at the bottom to remove it. Works any time the floor is open.','<b>Remove:</b> tap a piece, then press Remove (or the Delete key).','<b>Remove many at once:</b> press Select area, drag a box over the pieces (tap a piece to add or drop it), then press Delete selected. Undo brings them back.','<b>Turn a piece:</b> select it and press Rotate (or R).','<b>Turn the whole floor</b> to see behind tall machines: the ⟲ ⟳ buttons, the Q and E keys, Shift + drag, or twist two fingers on a phone.','Pinch or scroll to zoom. Drag empty floor to pan.']},
  {t:'Your floor',b:['The admin gives you a floor and a factory (A to D, which sets your product mix). Teammates get different floors.','Your floor changes between rounds. Read the Score panel for the target, budget and space needed.'],tip:'Open this guide again any time with the Rules button.'}
 ];
 /* picture side of each rule card: icon, one-line headline, a small drawing, 2-4 short lines (the older long text sits under "More detail") */
@@ -2923,7 +2975,7 @@ const RV=[
   fig:fSvg(70,fBox(2,26,34,22,RC.y,'🚚',14)+fArr(38,56,37)+fBox(58,18,36,38,RC.m2,'STORE',9)+fArr(96,110,37)+fBox(112,22,28,30,RC.m1,'RM',11)+fTxt(150,40,'···',RC.w,14)+fBox(160,22,28,30,RC.m4,'PK',11)+fArr(190,204,37)+fBox(206,18,36,38,RC.m2,'STORE',9))},
  {ic:'💰',head:'Cheap and clear',pts:['Spend is capped by the round budget','Same target for less money scores higher','Keep an open aisle from IN to OUT'],
   fig:fSvg(60,fBox(6,14,150,26,RC.d,'')+fBox(6,14,96,26,RC.g,'')+fTxt(54,31,'spent','#06281a',11)+fTxt(130,31,'left',RC.w,11)+fTxt(6,54,'₹0',RC.w,9,'start')+fTxt(156,54,'BUDGET',RC.w,9,'end')+fBox(172,14,70,26,RC.y,'IN → OUT',9))},
- {ic:'✋',head:'Move, turn, remove',pts:['<b>Drag</b> a piece to move it; drop on the bottom cards to remove','<b>R</b> turns a piece; <b>Q</b> and <b>E</b> turn the whole floor','Pinch or scroll to zoom, drag the floor to pan'],
+ {ic:'✋',head:'Move, turn, remove',pts:['<b>Drag</b> a piece to move it; drop on the bottom cards to remove','<b>Select area</b> boxes in many pieces to delete together','<b>R</b> turns a piece; <b>Q</b> and <b>E</b> turn the whole floor','Pinch or scroll to zoom, drag the floor to pan'],
   fig:fSvg(60,fBox(4,8,56,44,RC.d,'✋ drag',11)+fBox(66,8,56,44,RC.d,'↻ R',12)+fBox(128,8,56,44,RC.d,'⟲ ⟳',13)+fBox(190,8,56,44,RC.d,'🗑',16))},
  {ic:'🗺',head:'Your own floor',pts:['The admin gives you a floor and a factory (A to D)','The floor changes every round','Read the <b>Score</b> panel for target and budget'],
   fig:fSvg(70,'<path d="M20 44L70 18L120 44L70 62Z" fill="#cfd8df"/><path d="M110 40L160 14L222 46L170 66Z" fill="#cfd8df"/><rect x="132" y="28" width="12" height="10" fill="#4a5360"/><rect x="190" y="40" width="14" height="10" fill="#4a5360"/>'+fTxt(70,12,'Round 1',RC.w,10)+fTxt(172,10,'Round 2',RC.w,10))}
