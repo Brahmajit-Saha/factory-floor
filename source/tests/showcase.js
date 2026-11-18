@@ -1,0 +1,17 @@
+const puppeteer=require('/home/claude/smoke/node_modules/puppeteer-core'); const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+(async()=>{ const b=await puppeteer.launch({executablePath:'/usr/bin/google-chrome',args:['--no-sandbox'],headless:'new'}); const p=await b.newPage(); await p.setViewport({width:1400,height:800}); const errs=[]; p.on('pageerror',e=>errs.push(e.message));
+ await p.goto('file:///home/claude/ff2/dist/index.html?demo=1'); await sleep(800);
+ await p.evaluate(()=>{ const cv=document.createElement('canvas'); cv.id='sc'; cv.style.cssText='position:fixed;inset:0;width:100vw;height:100vh;z-index:9999;background:#120639'; document.body.appendChild(cv);
+  const rows=[];for(let y=0;y<50;y++){let s='';for(let x=0;x<50;x++){ let ch='.'; if(x>=5&&x<45&&y>=5&&y<45) ch='+'; if(x===5&&y>=20&&y<28) ch='I'; if(x===44&&y>=20&&y<28) ch='O'; if(x===20&&y===34) ch='#'; if(x===25&&y===14) ch='#'; s+=ch;} rows.push(s);} window.__rows=rows;
+  const ctx=floorCtx(rows), cfg=cloneCfg(); let id=1; const mk=(type,x,y,rot=0)=>({id:id++,type,x,y,rot});
+  const belt=[mk('BM',15,22,0)]; for(let x=17;x<=39;x++) belt.push(mk('BC',x,22)); belt.push(mk('BM',40,22,0));
+  const items=[mk('M1',6,22),mk('M2',8,22),mk('M3',11,22),...belt,mk('M4',42,22),mk('SS',6,19),mk('SS',41,19),mk('SL',20,28),mk('SM',27,28),mk('M1',6,24)];
+  window.__items=items; window.__ctx=ctx; window.__cfg=cfg;
+  window.__draw=(zoom,cx,cy,t,run,born)=>{ const dpr=1, W=innerWidth, H=innerHeight; cv.width=W; cv.height=H; const V={mode:'iso',zoom,px:0,py:0,rot:0}; const q=P(V,cx,cy,0); V.px=W/2-q[0]; V.py=H/2-q[1];
+    const P3={target:30,budget:265000,need:30*coef('A')*1.65,m:.65,f:'A'}; const an=analyze(items,ctx,cfg,P3); const sm=an.sim; const idx=Math.min(sm.tl.length-1,Math.floor(t)); const play=run?{f:sm.tl[idx],ev:sm.ev.filter(e=>t>=e.t&&t<e.t+5)}:null;
+    drawScene(cv.getContext('2d'),V,W,H,{rows,items,cfg,an,ctx,sel:null,ghost:null,paintCells:null,dpr,play,t:t,fx:true,run:!!run,anim:(t/1.3)%1,born:born?new Map([[born,t-.3]]):null,puffs:null}); return {rate:an.rate}; }; });
+ const shot=async(name,z,cx,cy,t,run,born)=>{ const r=await p.evaluate((z,cx,cy,t,run,born)=>window.__draw(z,cx,cy,t,run,born),z,cx,cy,t,run,born); await p.screenshot({path:'/tmp/sc_'+name+'.png'}); return r; };
+ console.log(JSON.stringify(await shot('idle',3.4,13,24,0,false)));
+ console.log(JSON.stringify(await shot('run1',3.4,13,24,200.4,true))); await shot('run2',3.4,13,24,200.9,true);
+ await shot('belt',3.2,34,23,200.6,true); await shot('store',3.0,25,29,200.6,true); await shot('drop',3.4,13,24,200.4,true,3);
+ console.log('errors',errs.length,errs.slice(0,3)); await b.close(); })();

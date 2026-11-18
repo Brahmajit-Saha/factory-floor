@@ -11,7 +11,8 @@ const S={
   pool:null, poolKey:'', auto:null, floor:null, ctx:null, rows:null,
   target:0, budget:0, m:0.6, need:0,
   items:[], nextId:1, undo:[], sel:null, drag:null, paint:null, armed:null, trayRot:0,
-  V:{mode:'iso',zoom:1,px:0,py:0}, an:null, dirty:true, W:0, H:0, dpr:1
+  V:{mode:'iso',zoom:1,px:0,py:0,rot:0}, an:null, dirty:true, W:0, H:0, dpr:1,
+  fx:fxEnabled(), t:0, born:new Map(), puffs:[], prev:new Map(), fxUntil:0, fxArm:false
 };
 const poolCache={};
 function toast(msg,ms){ const t=$('toast'); t.textContent=msg; t.classList.add('on'); clearTimeout(toast.h); toast.h=setTimeout(()=>t.classList.remove('on'),ms||1800); }
@@ -31,15 +32,22 @@ function showOverlay(){}
 showOverlay.dismissed=false;
 $('tuClose').onclick=()=>{ showOverlay.dismissed=true; $('timesup').classList.remove('on'); };
 let emitT=null;
-function emitChange(now){ if(!Builder.onChange) return; const send=()=>{ emitT=null; Builder.onChange({items:S.items.map(i=>({id:i.id,type:i.type,x:i.x,y:i.y,rot:i.rot})),an:{total:S.an.total,pts:S.an.pts,rate:S.an.rate,cost:S.an.cost}}); }; if(now){ clearTimeout(emitT); send(); } else { clearTimeout(emitT); emitT=setTimeout(send,700); } }
+function emitChange(now){ if(!Builder.onChange) return; const send=()=>{ emitT=null; Builder.onChange({items:S.items.map(i=>({id:i.id,type:i.type,x:i.x,y:i.y,rot:i.rot})),an:{total:S.an.total,pts:S.an.pts,rate:S.an.rate,cost:S.an.cost,hl:hlOf(S.an.sim,null)}}); }; if(now){ clearTimeout(emitT); send(); } else { clearTimeout(emitT); emitT=setTimeout(send,700); } }
 
 /* ---------- loading a floor ---------- */
 function loadFloor(keepView){
-  const key=S.seed+'|'+S.Pn;
-  if(!poolCache[key]) poolCache[key]=generatePool(S.seed,S.Pn);
-  S.pool=poolCache[key];
-  S.auto=autoParams(S.pool,S.K,S.cfg);
-  const g=floorFor(S.seed,S.pool,S.K,S.R,S.round,S.fi);
+  let g;
+  if(S.lay){ // the admin assigned this player a floor: build only that one
+    const k1=S.seed+'|one|'+S.lay; if(!poolCache[k1]) poolCache[k1]=generateOne(S.seed,S.lay-1);
+    g={index:S.lay,floor:poolCache[k1]};
+    S.auto=(S.tOver&&S.bOver)?{target:S.tOver,budget:S.bOver}:autoParams(S.use&&S.use.length?S.use.map(n=>generateOne(S.seed,n-1)):[g.floor],S.K,S.cfg);
+  } else {
+    const key=S.seed+'|'+S.Pn;
+    if(!poolCache[key]) poolCache[key]=generatePool(S.seed,S.Pn);
+    S.pool=poolCache[key];
+    S.auto=autoParams(S.pool,S.K,S.cfg);
+    g=floorFor(S.seed,S.pool,S.K,S.R,S.round,S.fi);
+  }
   S.floor=g; S.rows=g.floor.rows; S.ctx=floorCtx(S.rows);
   S.target=Math.max(10,Math.min(S.cfg.targetMax,S.tOver||S.auto.target));
   S.budget=Math.max(1000,Math.min(S.cfg.budgetMax,S.bOver||S.auto.budget));
@@ -56,8 +64,10 @@ function focusIn(){
   const w=[sx,sy]; V.zoom=Math.min(4,V.zoom*1.9); const q=P(V,w[0],w[1],0); V.px+=S.W/2-q[0]; V.py+=S.H/2-q[1];
 }
 function refresh(){
-  S.an=analyze(S.items,S.ctx,S.cfg,{target:S.target,budget:S.budget,need:S.need});
-  S.dirty=true; updatePanels(); updateTray(); updateBubble();
+  fxSync(S.fxArm); S.fxArm=false; const prevOver=S.an?S.an.overBelts:0;
+  S.an=analyze(S.items,S.ctx,S.cfg,{target:S.target,budget:S.budget,need:S.need,m:S.m,f:FACTORIES[S.fi],tr:S.tr,D:S.D});
+  if(S.an.overBelts>prevOver) toast('Too many belts on one piece. A machine takes 2 in and 2 out, storage 3 in and 3 out. The extra belt is ignored (red outline).',4200);
+  S.liveKey=''; S.dirty=true; if(S.liveT!=null) setLive(S.liveT); updatePanels(); updateTray(); updateBubble();
 }
 
 /* ---------- panels ---------- */
@@ -70,21 +80,55 @@ function updatePanels(){
   $('barRate').style.setProperty('--mark','80%');
   const bf=a.cost/S.budget; setBar('barBudget',bf,bf>0.97?'bad':bf>0.85?'warn':'good','Budget '+inr(a.cost)+' / '+inr(S.budget));
   const sf=a.capacity/S.need; setBar('barStore',sf,sf>=1?'good':(a.capacity>0?'warn':''),'Storage '+num(a.capacity)+' / '+num(S.need)+' space');
-  $('score').textContent=num(a.total,1);
-  const rowsDef=[['Closeness to target',a.pts.close,S.cfg.weights.close],['Spending efficiency',a.pts.spend,S.cfg.weights.spend],['Storage planning',a.pts.store,S.cfg.weights.store],['Layout and flow',a.pts.layout,S.cfg.weights.layout]];
-  $('breakdown').innerHTML=rowsDef.map(r=>'<div class="brow"><span>'+r[0]+'</span><div class="mini"><i style="width:'+(r[1]/r[2]*100)+'%"></i></div><em>'+num(r[1],1)+' / '+r[2]+'</em></div>').join('');
+  $('hl').innerHTML=hlHtml(hlOf(a.sim,S.liveT),S.liveT!=null);
   $('checks').innerHTML=CHECK_NAMES.map((n,i)=>{ const v=a.checks[i]; return '<li class="'+(v>=.999?'ok':v>0?'part':'no')+'"><span>'+n+'</span><em>'+Math.round(v*100)+'%</em></li>'; }).join('');
-  $('stages').innerHTML='<tr><th>Stage</th><th>Fed</th><th>Capacity</th></tr>'+a.stages.map(x=>'<tr class="'+(x.bottleneck&&x.placed?'bn':'')+'"><td>'+x.stage+'. '+x.name+'</td><td>'+x.fed+' / '+x.placed+'</td><td>'+num(x.cap,1)+(x.bottleneck?' ◂':'')+'</td></tr>').join('');
+  $('stages').innerHTML='<tr><th>Stage</th><th>Fed</th><th>Capacity</th><th>Running at</th></tr>'+a.stages.map(x=>'<tr class="'+(x.bottleneck&&x.placed?'bn':'')+'"><td>'+x.stage+'. '+x.name+'</td><td>'+x.fed+' / '+x.placed+'</td><td>'+num(x.cap,1)+'</td><td>'+num(x.flow,1)+(x.bottleneck?' ◂':'')+'</td></tr>').join('');
   $('facts').innerHTML='<div><span>Human-only production rate</span><b>'+num(a.human)+' units/min</b></div>'
     +'<div><span>Machine slots</span><b>'+a.slots+' (machines + belt motors)</b></div>'
     +'<div><span>Complete belts</span><b>'+a.completeBelts+'</b></div>'
+    +(a.overBelts?'<div><span>Belts over the connection limit</span><b style="color:#ff8a7a">'+a.overBelts+' (ignored)</b></div>':'')
     +'<div><span>Cheapest possible build</span><b>'+inr(a.cheapest)+'</b></div>';
   const d=deliveries(f,S.target,S.m);
+  $('simres').innerHTML=simPanel();
   $('deliv').innerHTML='<tr><th>Each minute</th><th>Units</th><th>Space</th></tr>'
     +d.rm.map(x=>'<tr><td>'+x.id+'</td><td>'+num(x.units)+'</td><td>'+num(x.space)+'</td></tr>').join('')
     +'<tr class="sum"><td>Raw material batch</td><td></td><td>'+num(d.rmSpace)+'</td></tr>'
     +'<tr><td>Finished goods (× m = '+S.m.toFixed(2)+')</td><td></td><td>'+num(d.fgSpace)+'</td></tr>'
     +'<tr class="sum"><td>Space needed</td><td></td><td>'+num(d.total)+'</td></tr>';
+}
+/* ---------- the two highlights: finished goods shipped (green) and raw material turned away (red, by type) ---------- */
+function hlOf(sm,t){ // up to the round clock second t, or for the whole round when t is null
+  if(!sm) return {fg:0,rm:0,types:[]};
+  let fg=sm.shipped, rm=sm.lost;
+  if(t!=null){ const idx=Math.min(sm.tl.length-1,Math.max(0,Math.floor(t))); fg=sm.tl[idx].shipped; rm=0; for(const e of sm.ev) if(e.type==='in'&&e.t<=t) rm+=e.lost||0; }
+  return {fg,rm,types:(sm.mix||[]).map(x=>[x.id,rm*x.share])};
+}
+function hlHtml(h,live,bare){
+  const li=h.types.map(x=>'<li><span>'+x[0]+'</span><b>'+num(x[1])+'</b></li>').join('');
+  return '<div class="hlc fg"><small>Finished goods shipped</small><b>'+num(h.fg)+'</b><em>units</em></div>'
+    +'<div class="hlc rm"><small>Raw material turned away</small><b>'+num(h.rm)+'</b><em>units sent back</em>'+(h.rm>0.5?'<ul>'+li+'</ul>':'')+'</div>'
+    +(bare?'':'<p class="note" style="grid-column:1/-1;margin:0">'+(live?'Up to now on the round clock.':'Projected for the whole round.')+' Your points are added after the round: the judges mark layout and flow.</p>');
+}
+/* ---------- trucks on the round clock ---------- */
+function simLabel(t){ t=Math.max(0,Math.floor(t)); return Math.floor(t/60)+':'+String(t%60).padStart(2,'0'); }
+function setTrucks(tr,D){ // schedule from the shell: the admin/GM may change it any time during the round
+  const sig=JSON.stringify([tr||null,Math.round(D||0)]); if(sig===S.trSig) return; S.trSig=sig; S.tr=tr||null; S.D=Math.round(D)||720; if(S.rows) refresh();
+}
+function setLive(t){ // seconds since the round started, or null when no round is running
+  if(t==null){ if(S.liveT!=null){ S.liveT=null; $('simclock').style.display='none'; S.dirty=true; } return; }
+  const sm=S.an&&S.an.sim; S.liveT=t; if(!sm){ return; }
+  const idx=Math.min(sm.tl.length-1,Math.max(0,Math.floor(t)));
+  const ev=sm.ev.filter(e=>t>=e.t&&t<e.t+5);
+  const key=idx+'|'+ev.length; if(key!==S.liveKey){ S.liveKey=key; S.play={f:sm.tl[idx],ev}; const h=hlOf(sm,t); $('simclock').innerHTML='Round '+simLabel(t)+' · <span style="color:#3fe08f">FG shipped <b>'+num(h.fg)+'</b></span> · <span style="color:#ff8a7a">RM turned away <b>'+num(h.rm)+'</b></span>'; $('simclock').style.display='block'; S.dirty=true; }
+}
+function simPanel(){
+  const sm=S.an.sim; if(!sm) return '';
+  return '<tr><th>Truck schedule (whole round)</th><th>Units</th></tr>'
+   +'<tr><td>Offered by delivery trucks</td><td>'+num(sm.delivered)+'</td></tr>'
+   +'<tr><td>Accepted into storage or line</td><td>'+num(sm.accepted)+'</td></tr>'
+   +'<tr><td>Turned away (no room)</td><td>'+num(sm.lost)+'</td></tr>'
+   +'<tr class="sum"><td>Shipped out</td><td>'+num(sm.shipped)+'</td></tr>'
+   +'<tr><td>Average shipped per minute</td><td>'+num(sm.rate,1)+'</td></tr>';
 }
 function updateTray(){
   const cnt={}; for(const it of S.items) cnt[it.type]=(cnt[it.type]||0)+1;
@@ -101,11 +145,12 @@ function updateTray(){
 /* ---------- selected piece bubble ---------- */
 function selItem(){ return S.sel==null?null:S.items.find(i=>i.id===S.sel)||null; }
 function updateBubble(){
-  const b=$('bubble'), it=selItem();
+  const b=$('bubble'), it=selItem(); $('delSel').disabled=!it||locked();
   if(!it||S.drag){ b.style.display='none'; return; }
-  const d=S.cfg.pieces[it.type], [w,h]=dims(d,it.rot), p=P(S.V,it.x+w/2,it.y,S.V.mode==='flat'?0:2.8);
-  b.style.display='flex'; b.style.left=Math.round(p[0])+'px'; b.style.top=Math.round(p[1])+'px';
-  $('bubTitle').textContent=d.name;
+  const d=S.cfg.pieces[it.type], [w,h]=dims(d,it.rot), zz=S.V.mode==='flat'?0:2.8;
+  const cs=[[it.x,it.y],[it.x+w,it.y],[it.x,it.y+h],[it.x+w,it.y+h]].map(q=>P(S.V,q[0],q[1],zz)), px=(Math.min(...cs.map(q=>q[0]))+Math.max(...cs.map(q=>q[0])))/2, py=Math.min(...cs.map(q=>q[1]));
+  b.style.display='flex'; b.style.left=Math.round(px)+'px'; b.style.top=Math.round(py)+'px';
+  $('bubTitle').textContent=d.name+' · drag to move';
 }
 
 /* ---------- canvas size and loop ---------- */
@@ -114,10 +159,18 @@ function resize(){
   S.W=Math.max(100,Math.round(r.width)); S.H=Math.max(100,Math.round(r.height));
   cv.width=S.W*S.dpr; cv.height=S.H*S.dpr; cv.style.width=S.W+'px'; cv.style.height=S.H+'px'; S.dirty=true;
 }
-function frame(){
+let animAt=0;
+function frame(now){
+  now=now||performance.now(); S.t=now/1000;
+  const run=S.fx&&S.liveT!=null&&!!S.play; S.run=run;
+  if(S.fx&&S.rows){
+    if(run&&now-animAt>33){ animAt=now; S.anim=(now/1300)%1; S.dirty=true; }
+    else if(now<S.fxUntil){ S.dirty=true; }
+    else if(S.puffs.length||S.born.size){ S.puffs=[]; S.born.clear(); S.dirty=true; }
+  }
   if(S.dirty&&S.rows){ S.dirty=false;
     const ghost=S.drag&&S.drag.cand?{item:S.drag.cand,ok:S.drag.ok,reason:S.drag.ok?'':S.drag.reason}:null;
-    drawScene(c,S.V,S.W,S.H,{rows:S.rows,items:S.items,cfg:S.cfg,an:S.an,ctx:S.ctx,sel:S.sel,ghost,paintCells:S.paint?S.paint.cells:null,dpr:S.dpr});
+    drawScene(c,S.V,S.W,S.H,{rows:S.rows,items:S.items,cfg:S.cfg,an:S.an,ctx:S.ctx,sel:S.sel,ghost,paintCells:S.paint?S.paint.cells:null,dpr:S.dpr,anim:S.anim||0,play:S.play,t:S.t,fx:S.fx,run:S.run,born:S.born,puffs:S.puffs});
     updateBubble();
   }
   requestAnimationFrame(frame);
@@ -125,7 +178,15 @@ function frame(){
 
 /* ---------- editing helpers ---------- */
 function snapshot(){ S.undo.push(JSON.stringify(S.items)); if(S.undo.length>60) S.undo.shift(); }
-function commit(){ refresh(); emitChange(); }
+function commit(){ S.fxArm=true; refresh(); emitChange(); }
+/* a piece that was just put down drops in with a bounce and a puff of dust; one taken away goes with a poof */
+function fxSync(effects){
+  const now=performance.now()/1000, cur=new Map(S.items.map(i=>[i.id,i]));
+  if(effects&&S.fx){ for(const it of S.items){ const o=S.prev.get(it.id); if(!o||o.x!==it.x||o.y!==it.y||o.rot!==it.rot||o.type!==it.type) S.born.set(it.id,now); }
+    for(const [id,o] of S.prev) if(!cur.has(id)){ const [w,h]=dims(S.cfg.pieces[o.type],o.rot); S.puffs.push({x:o.x,y:o.y,w,h,t0:now}); }
+    S.fxUntil=performance.now()+1200; }
+  S.prev=new Map(S.items.map(i=>[i.id,{type:i.type,x:i.x,y:i.y,rot:i.rot}]));
+}
 function candAt(type,rot,sx,sy,touch){
   const d=S.cfg.pieces[type], [w,h]=dims(d,rot);
   const g=unP(S.V,sx,sy-(touch?44:0));
@@ -134,11 +195,14 @@ function candAt(type,rot,sx,sy,touch){
 function overStage(x,y){ const r=stage.getBoundingClientRect(); return x>=r.left&&x<=r.right&&y>=r.top&&y<=r.bottom; }
 function updateCand(d,cx,cy){
   const r=stage.getBoundingClientRect(); d.cx=cx; d.cy=cy;
-  if(!overStage(cx,cy)){ d.cand=null; return; }
+  d.remove=false; if(!overStage(cx,cy)){ d.cand=null; return; }
   const type=d.type||d.item.type;
-  d.cand=candAt(type,d.rot,cx-r.left,cy-r.top,d.touch);
+  if(d.grab){ const g=unP(S.V,cx-r.left,cy-r.top); d.cand={type,rot:d.rot,x:Math.round(g[0]+d.grab[0]),y:Math.round(g[1]+d.grab[1])}; }
+  else d.cand=candAt(type,d.rot,cx-r.left,cy-r.top,d.touch);
   const chk=checkPlace(S.ctx,S.items,d.cand,S.cfg,S.budget,d.item?d.item.id:null);
-  d.ok=chk.ok; d.reason=chk.reason;
+  d.ok=chk.ok; d.reason=chk.reason; d.remove=false;
+  if(d.kind==='move'){ const g=unP(S.V,cx-r.left,cy-r.top), gx=Math.floor(g[0]), gy=Math.floor(g[1]); // let go outside the factory outline: the piece is removed
+    if(gx<0||gy<0||gx>=N||gy>=N||S.rows[gy][gx]==='.'){ d.remove=true; d.ok=false; d.reason='Release to remove'; } }
 }
 function placeCand(d){
   if(!d.cand) return false;
@@ -158,6 +222,7 @@ function rotateSel(){
   toast('No room to rotate here');
 }
 function removeSel(){ if(locked()) return; const it=selItem(); if(!it) return; snapshot(); S.items=S.items.filter(i=>i.id!==it.id); S.sel=null; commit(); }
+$('delSel').onclick=()=>removeSel();
 function doRotate(){
   if(locked()) return;
   if(S.drag){ S.drag.rot=(S.drag.rot+1)%4; updateCand(S.drag,S.drag.cx,S.drag.cy); S.dirty=true; return; }
@@ -215,6 +280,7 @@ function onWinUp(e){
     const overTray=document.elementFromPoint(e.clientX,e.clientY);
     if(overTray&&overTray.closest&&overTray.closest('#tray')&&e.type!=='pointercancel'){ S.sel=null; S.items=S.items.filter(i=>i.id!==d.item.id); commit(); toast('Removed'); return; }
     updateCand(d,e.clientX,e.clientY);
+    if(e.type!=='pointercancel'&&d.remove){ S.sel=null; S.items=S.items.filter(i=>i.id!==d.item.id); commit(); toast('Removed'); return; }
     if(e.type!=='pointercancel'&&d.cand&&d.ok){ const it=Object.assign({},d.cand,{id:d.item.id}); S.items.push(it); S.sel=it.id; commit(); }
     else { S.items.push(d.orig); S.sel=d.orig.id; S.undo.pop(); if(d.cand&&!d.ok) toast(d.reason); refresh(); }
   }
@@ -222,7 +288,7 @@ function onWinUp(e){
 }
 
 /* ---------- canvas: pan, zoom, select, move, stamp ---------- */
-const ptrs=new Map(); let pan=null, pend=null, pinch=null;
+const ptrs=new Map(); let pan=null, pend=null, pinch=null, rotDrag=null;
 function localXY(e){ const r=stage.getBoundingClientRect(); return [e.clientX-r.left,e.clientY-r.top]; }
 function itemAt(sx,sy){
   const g=unP(S.V,sx,sy), gx=Math.floor(g[0]), gy=Math.floor(g[1]);
@@ -237,27 +303,37 @@ function itemAt(sx,sy){
 cv.addEventListener('pointerdown',e=>{
   if(e.target!==cv) return; cv.setPointerCapture(e.pointerId);
   const [x,y]=localXY(e); ptrs.set(e.pointerId,{x,y,sx:x,sy:y,t:Date.now(),touch:e.pointerType==='touch'});
-  if(ptrs.size===2){ const [a,b]=[...ptrs.values()]; pinch={d:Math.hypot(a.x-b.x,a.y-b.y),z:S.V.zoom}; pan=null; pend=null; S.paint=null; S.dirty=true; return; }
+  if(ptrs.size===2){ const [a,b]=[...ptrs.values()]; pinch={d:Math.hypot(a.x-b.x,a.y-b.y),z:S.V.zoom,a:Math.atan2(b.y-a.y,b.x-a.x)}; pan=null; pend=null; rotDrag=null; S.paint=null; S.dirty=true; return; }
   if(ptrs.size>2) return;
-  if(S.armed==='BC'&&e.button===0&&!locked()){ paintStart(x,y,e.pointerType==='touch',e.pointerId,'canvas'); return; }
-  const it=(S.armed||locked())?null:itemAt(x,y);
+  if(e.shiftKey){ rotDrag={id:e.pointerId,x,acc:0}; return; } // Shift + drag sideways turns the view
+  const hit=locked()?null:itemAt(x,y);
+  if(S.armed==='BC'&&e.button===0&&!locked()&&!hit){ paintStart(x,y,e.pointerType==='touch',e.pointerId,'canvas'); return; }
+  const it=hit;
   if(it) pend={it,x,y,touch:e.pointerType==='touch',id:e.pointerId};
   else pan={x,y,px:S.V.px,py:S.V.py,id:e.pointerId,moved:false};
 });
 cv.addEventListener('pointermove',e=>{
-  const p=ptrs.get(e.pointerId); if(!p) return; const [x,y]=localXY(e); p.x=x; p.y=y;
-  if(pinch&&ptrs.size===2){ const [a,b]=[...ptrs.values()]; const nd=Math.hypot(a.x-b.x,a.y-b.y); zoomAt((a.x+b.x)/2,(a.y+b.y)/2,pinch.z*nd/pinch.d,true); return; }
+  const p=ptrs.get(e.pointerId);
+  if(!p){ if(e.pointerType==='mouse'&&!S.drag){ const [hx,hy]=localXY(e); cv.style.cursor=(!locked()&&itemAt(hx,hy))?'grab':''; } return; }
+  const [x,y]=localXY(e); p.x=x; p.y=y;
+  if(rotDrag&&rotDrag.id===e.pointerId){ rotDrag.acc+=x-rotDrag.x; rotDrag.x=x; if(Math.abs(rotDrag.acc)>70){ rotateView(rotDrag.acc>0?1:-1); rotDrag.acc=0; } return; }
+  if(pinch&&ptrs.size===2){ const [a,b]=[...ptrs.values()]; const nd=Math.hypot(a.x-b.x,a.y-b.y); zoomAt((a.x+b.x)/2,(a.y+b.y)/2,pinch.z*nd/pinch.d,true);
+    let da=Math.atan2(b.y-a.y,b.x-a.x)-pinch.a; while(da>Math.PI) da-=2*Math.PI; while(da<-Math.PI) da+=2*Math.PI;
+    if(Math.abs(da)>0.8){ rotateView(da>0?1:-1); pinch.a+=da; } return; }
   if(S.paint&&S.paint.src==='canvas'&&S.paint.id===e.pointerId){ paintMove(x,y); return; }
   if(S.drag&&S.drag.kind==='move'&&S.drag.id===e.pointerId){ updateCand(S.drag,e.clientX,e.clientY); S.dirty=true; return; }
   if(pend&&pend.id===e.pointerId&&Math.hypot(x-pend.x,y-pend.y)>6){
     snapshot(); const it=pend.it; S.items=S.items.filter(i=>i.id!==it.id); S.sel=it.id;
-    S.drag={kind:'move',item:it,orig:Object.assign({},it),type:it.type,rot:it.rot,touch:pend.touch,id:e.pointerId,cand:null,ok:false,reason:''};
+    const g0=unP(S.V,pend.x,pend.y);
+    S.drag={kind:'move',item:it,orig:Object.assign({},it),type:it.type,rot:it.rot,touch:pend.touch,id:e.pointerId,cand:null,ok:false,reason:'',grab:[it.x-g0[0],it.y-g0[1]]}; cv.style.cursor='grabbing';
+    if(!S.tipMove){ S.tipMove=1; toast('Drop it on a free spot to move it, or on the cards at the bottom to remove it.',3600); }
     pend=null; updateCand(S.drag,e.clientX,e.clientY); refresh(); S.dirty=true; return;
   }
   if(pan&&pan.id===e.pointerId){ if(Math.hypot(x-pan.x,y-pan.y)>4) pan.moved=true; S.V.px=pan.px+(x-pan.x); S.V.py=pan.py+(y-pan.y); S.dirty=true; }
 });
 function endPtr(e){
   const p=ptrs.get(e.pointerId); if(!p) return; ptrs.delete(e.pointerId);
+  if(rotDrag&&rotDrag.id===e.pointerId){ rotDrag=null; return; }
   if(pinch){ if(ptrs.size<2) pinch=null; pan=null; pend=null; return; }
   const [x,y]=localXY(e);
   if(S.paint&&S.paint.src==='canvas'&&S.paint.id===e.pointerId){ if(e.type==='pointercancel') S.paint=null; paintCommit(); return; }
@@ -274,10 +350,11 @@ function endPtr(e){
   }
 }
 function onMoveDrop(e){
-  const d=S.drag; S.drag=null;
+  const d=S.drag; S.drag=null; cv.style.cursor='';
   const t=document.elementFromPoint(e.clientX,e.clientY);
   if(t&&t.closest&&t.closest('#tray')&&e.type==='pointerup'){ S.sel=null; commit(); toast('Removed'); return; }
   updateCand(d,e.clientX,e.clientY);
+  if(e.type==='pointerup'&&d.remove){ S.sel=null; commit(); toast('Removed'); return; }
   if(e.type==='pointerup'&&d.cand&&d.ok){ const it=Object.assign({},d.cand,{id:d.item.id}); S.items.push(it); S.sel=it.id; commit(); }
   else { S.items.push(d.orig); S.sel=d.orig.id; S.undo.pop(); if(d.cand&&!d.ok) toast(d.reason); refresh(); }
 }
@@ -289,6 +366,14 @@ function zoomAt(sx,sy,z,abs){
 cv.addEventListener('contextmenu',e=>e.preventDefault());
 cv.addEventListener('wheel',e=>{ e.preventDefault(); const [x,y]=localXY(e); zoomAt(x,y,Math.exp(-e.deltaY*0.0015)); },{passive:false});
 $('zin').onclick=()=>zoomAt(S.W/2,S.H/2,1.3); $('zout').onclick=()=>zoomAt(S.W/2,S.H/2,1/1.3);
+function rotateView(dir){ // quarter turn of the whole floor about the middle of the screen
+  const V=S.V, w=unP(V,S.W/2,S.H/2), z0=V.zoom, f0=Object.assign({},V); fitView(f0,S.rows,S.W,S.H); const wasFit=z0<=f0.zoom*1.08; V.rot=((V.rot||0)+dir+4)%4; const q=P(V,w[0],w[1],0); V.px+=S.W/2-q[0]; V.py+=S.H/2-q[1];
+  const f=Object.assign({},V); fitView(f,S.rows,S.W,S.H); if(wasFit){ V.zoom=f.zoom; V.px=f.px; V.py=f.py; } // not zoomed in: keep the whole floor on screen
+  S.dirty=true;
+}
+$('vleft').onclick=()=>rotateView(-1); $('vright').onclick=()=>rotateView(1);
+const fxb=$('fxBtn'); const fxPaint=()=>{ fxb.classList.toggle('off',!S.fx); fxb.title=S.fx?'Animations on (tap to turn off)':'Animations off (tap to turn on)'; }; fxPaint();
+fxb.onclick=()=>{ S.fx=!S.fx; try{ localStorage.setItem('ffFx',S.fx?'1':'0'); }catch(e){} if(!S.fx){ S.born.clear(); S.puffs=[]; S.anim=null; } fxPaint(); S.dirty=true; toast(S.fx?'Animations on':'Animations off',1200); };
 $('zfit').onclick=()=>{ fitView(S.V,S.rows,S.W,S.H); S.dirty=true; };
 $('zin2')&&0;
 $('modeBtn').onclick=()=>{ S.V.mode=S.V.mode==='iso'?'flat':'iso'; $('modeBtn').textContent=S.V.mode==='iso'?'Flat plan':'3D view'; fitView(S.V,S.rows,S.W,S.H); S.dirty=true; };
@@ -301,6 +386,8 @@ $('clear').onclick=()=>{ if(locked()) return; if(Date.now()-clearAt<3000){ snaps
 window.addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT') return;
   if(e.key==='r'||e.key==='R') doRotate();
+  else if(e.key==='q'||e.key==='Q') rotateView(-1);
+  else if(e.key==='e'||e.key==='E') rotateView(1);
   else if(e.key==='Delete'||e.key==='Backspace') { removeSel(); }
   else if(e.key==='Escape'){ S.paint=null; S.armed=null; S.sel=null; if(S.drag&&S.drag.kind==='new'){ S.drag=null; } updateTray(); updateBubble(); S.dirty=true; }
   else if((e.ctrlKey||e.metaKey)&&e.key==='z'){ $('undo').click(); e.preventDefault(); }
@@ -313,10 +400,10 @@ window.addEventListener('resize',()=>{ resize(); S.dirty=true; });
 new ResizeObserver(()=>{ resize(); S.dirty=true; }).observe(stage);
 const Builder={onChange:null,
   load(o){ // {seed,pool,K,R,round,fi,target,budget,items,who}
-    S.seed=o.seed; S.Pn=o.pool; S.K=o.K; S.R=o.R; S.round=o.round; S.fi=o.fi; S.tOver=o.target||null; S.bOver=o.budget||null;
-    S.items=(o.items||[]).map(i=>({id:i.id,type:i.type,x:i.x,y:i.y,rot:i.rot})); S.who=o.who||''; S.V.mode='iso'; $('modeBtn').textContent='Flat plan';
+    S.seed=o.seed; S.Pn=o.pool; S.K=o.K; S.R=o.R; S.round=o.round; S.fi=o.fi; S.lay=o.lay||0; S.use=o.use||null; S.tOver=o.target||null; S.bOver=o.budget||null;
+    S.items=(o.items||[]).map(i=>({id:i.id,type:i.type,x:i.x,y:i.y,rot:i.rot})); S.who=o.who||''; S.V.mode='iso'; S.V.rot=0; $('modeBtn').textContent='Flat plan';
     resize(); loadFloor(); },
-  setLock:setLock, setClock:setClock, resize(){ resize(); S.dirty=true; }, flush(){ if(emitT) emitChange(true); },
+  setLock:setLock, setClock:setClock, setTrucks:setTrucks, setLive:setLive, hlOf:hlOf, hlHtml:hlHtml, resize(){ resize(); S.dirty=true; }, flush(){ if(emitT) emitChange(true); },
   get state(){ return S; }
 };
 window.Builder=Builder;

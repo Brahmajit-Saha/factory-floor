@@ -179,6 +179,11 @@ function generatePool(seed,P){
   const floors=[]; for(let i=0;i<P;i++) floors.push(generateFloor(seed,i,famOrder[i%FAMILIES.length]));
   return floors;
 }
+/* one floor of the pool without building the others (same floor generatePool gives at that index) */
+function generateOne(seed,index){
+  const famOrder=shuffle([...Array(FAMILIES.length).keys()],rngFrom(seed+'|families'));
+  return generateFloor(seed,index,famOrder[index%FAMILIES.length]);
+}
 function poolOrder(seed,P){ return shuffle([...Array(P).keys()],rngFrom(seed+'|order')); }
 function schedule(order,P,K,R){
   const s=Math.floor(P/K), rows=[];

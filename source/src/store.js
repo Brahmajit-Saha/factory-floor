@@ -22,12 +22,12 @@ function setIn(tree,path,val){ // returns new root (mutates)
 }
 function pruneTree(t){ return prune(t)||{}; }
 
-function MemoryStore(){
+function MemoryStore(volatile){ // volatile: lives only in this page (used for the demo's sample event), nothing is shared or saved
   const KEY='ffdemo:tree'; const subs=[]; let mem={}; let tree=read();
-  function read(){ try{ const v=localStorage.getItem(KEY); if(v) return JSON.parse(v)||{}; }catch(e){} return mem; }
-  function save(){ mem=tree; try{ localStorage.setItem(KEY,JSON.stringify(tree)); }catch(e){} }
+  function read(){ if(volatile) return mem; try{ const v=localStorage.getItem(KEY); if(v) return JSON.parse(v)||{}; }catch(e){} return mem; }
+  function save(){ mem=tree; if(volatile) return; try{ localStorage.setItem(KEY,JSON.stringify(tree)); }catch(e){} }
   function notify(){ for(const s of subs.slice()){ const v=getIn(tree,s.path), j=JSON.stringify(v); if(j!==s.last){ s.last=j; s.cb(clone(v)); } } }
-  try{ window.addEventListener('storage',e=>{ if(e.key===KEY){ tree=read(); notify(); } }); }catch(e){}
+  if(!volatile) try{ window.addEventListener('storage',e=>{ if(e.key===KEY){ tree=read(); notify(); } }); }catch(e){}
   const api={
     kind:'demo',
     async get(p){ tree=read(); return clone(getIn(tree,p)); },
@@ -58,27 +58,27 @@ function FirebaseStore(baseUrl){
     }
     throw err;
   }
+  let es=null, tree=null, gotAll=false; const listeners=[];
+  const applyAt=(t0,path,data)=>{ const t=(t0&&typeof t0==='object')?t0:{}; const r=setIn(t,path,data===undefined?null:data); return (r&&Object.keys(r).length)?r:null; };
+  const emitOne=l=>{ clearTimeout(l.timer); l.timer=setTimeout(()=>{ if(l.dead) return; const v=getIn(tree,l.p), j=JSON.stringify(v); if(j!==l.last){ l.last=j; l.cb(clone(v)); } },0); };
+  const emitAll=()=>{ for(const l of listeners.slice()) emitOne(l); };
+  function openStream(){
+    es=new EventSource(url(''));
+    es.addEventListener('put',e=>{ try{ const m=JSON.parse(e.data); tree=m.path==='/'?(m.data===undefined?null:m.data):applyAt(tree,m.path,m.data); gotAll=true; setOnline(true); emitAll(); }catch(x){} });
+    es.addEventListener('patch',e=>{ try{ const m=JSON.parse(e.data); let v=tree; for(const k of Object.keys(m.data||{})) v=applyAt(v,(m.path==='/'?'':m.path)+'/'+k,m.data[k]); tree=v; gotAll=true; emitAll(); }catch(x){} });
+    es.addEventListener('cancel',()=>{ setOnline(false); });
+    es.onopen=()=>setOnline(true);
+    es.onerror=()=>{ setOnline(false); };
+  }
   const api={
     kind:'firebase',
     async get(p){ const v=await req('GET',p); return v===undefined?null:v; },
     async set(p,v){ await req('PUT',p,v===undefined?null:v); },
     async update(p,o){ await req('PATCH',p,o); },
     async remove(p){ await req('DELETE',p); },
-    on(p,cb){
-      let es=null, val=null, got=false, dead=false, last=undefined, timer=null;
-      const emit=()=>{ clearTimeout(timer); timer=setTimeout(()=>{ if(dead) return; const j=JSON.stringify(val); if(j!==last){ last=j; cb(clone(val)); } },0); };
-      const open=()=>{
-        if(dead) return;
-        es=new EventSource(url(p));
-        es.addEventListener('put',e=>{ try{ const m=JSON.parse(e.data); val=m.path==='/'?(m.data===undefined?null:m.data):applyAt(val,m.path,m.data); got=true; setOnline(true); emit(); }catch(x){} });
-        es.addEventListener('patch',e=>{ try{ const m=JSON.parse(e.data); let v=val; for(const k of Object.keys(m.data||{})) v=applyAt(v,(m.path==='/'?'':m.path)+'/'+k,m.data[k]); val=v; got=true; emit(); }catch(x){} });
-        es.addEventListener('cancel',()=>{ setOnline(false); });
-        es.onopen=()=>setOnline(true);
-        es.onerror=()=>{ setOnline(false); };
-      };
-      const applyAt=(tree,path,data)=>{ const t=(tree&&typeof tree==='object')?tree:{}; const r=setIn(t,path,data===undefined?null:data); return (r&&Object.keys(r).length)?r:null; };
-      open();
-      return ()=>{ dead=true; clearTimeout(timer); if(es) es.close(); };
+    on(p,cb){ // every subscription shares one stream of the whole tree (browsers allow only about six open connections per server)
+      const l={p,cb,last:undefined,timer:null,dead:false}; listeners.push(l); if(!es) openStream(); else if(gotAll) emitOne(l);
+      return ()=>{ l.dead=true; clearTimeout(l.timer); const i=listeners.indexOf(l); if(i>=0) listeners.splice(i,1); if(!listeners.length&&es){ es.close(); es=null; gotAll=false; tree=null; } };
     },
     now(){ return Date.now()+offset; },
     async ready(){ // measure the difference between this device's clock and the database server's clock

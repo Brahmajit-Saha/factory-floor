@@ -53,16 +53,45 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms)); let ok=0,bad=0; const t=(c,m)=
   // GM live build
   await gm.click('[data-tab=lv]'); await sleep(900); const cap=await gm.$eval('#lvCap',e=>e.textContent).catch(()=>''); t(cap.length>0,'GM live view caption '+cap);
   await gm.$$eval('#lvList button',bs=>{ const b=bs.find(x=>x.textContent.startsWith('Asha')); b&&b.click(); }); await sleep(800);
-  t((await gm.$eval('#lvSt',e=>e.textContent)).includes('Score'),'GM live stats shown'); await gm.screenshot({path:'/tmp/gm_live.png'});
+  { const lt=await gm.$eval('#lvSt',e=>e.textContent); t(lt.includes('Line rate')&&!lt.includes('Computer points'),'GM live stats shown, points hidden during the round'); } await gm.screenshot({path:'/tmp/gm_live.png'});
   await gm.click('[data-tab=lay]'); await sleep(900); t((await gm.$$('canvas[data-fi]')).length===4,'GM layouts: four floors'); await gm.screenshot({path:'/tmp/gm_lay.png'});
+  // ---- trucks: the schedule is saved with the round; the admin and the GM can send trucks and change the interval
+  t(T().rounds[1].every===60,'round saved with a 60 s truck interval');
+  const TR=()=>{ const x=(T().trucks||{})[1]||{}; const l=o=>Object.values(o||{}).sort((a,b)=>a.t-b.t); return {m:l(x.m).map(q=>q.t+':'+q.k).join(','),c:l(x.c).map(q=>q.t+':'+q.e).join(',')}; };
+  await ad.click('[data-act=tIn]'); await sleep(900); t((TR().m||'').endsWith(':i'),'admin sends a delivery truck: '+TR().m);
+  t(await waitFor(async()=>await A.evaluate(()=>window.__ff.S.an.sim.ev.some(e=>e.manual&&e.type==='in')),8000),'player sees the manual truck in the schedule');
+  await gm.click('[data-tr=tOut]'); await sleep(900); t((TR().m||'').split(',').length===2&&TR().m.endsWith(':o'),'GM sends a shipping truck: '+TR().m);
+  await gm.click('[data-tr=tDown]'); await sleep(900); t((TR().c||'').endsWith(':50'),'GM shortens the interval to 50 s: '+TR().c); await sleep(400); t((await gm.$eval('#gmTe',e=>e.textContent))==='50 s','GM sees every 50 s');
+  await ad.click('[data-act=tUp]'); await sleep(900); t((TR().c||'').split(',').length===2&&TR().c.endsWith(':60'),'admin lengthens it back to 60 s: '+TR().c); await sleep(400); t((await ad.$eval('#adTe',e=>e.textContent))==='60','admin sees 60 s');
+  t(await waitFor(async()=>await A.evaluate(()=>window.__ff.S.an.sim.ev.filter(e=>e.manual).length===2),8000),'player schedule has both manual trucks');
+  t(await gm.$eval('#gmTrucks',e=>getComputedStyle(e).display!=='none'),'GM truck controls visible while running');
   // ---- pause / resume
   await ad.click('[data-act=pause]'); await sleep(700); t(T().rounds[1].status==='paused','paused in db'); t(await waitFor(async()=>(await txt(A,'#tLabel'))==='Paused'),'player clock shows Paused'); t(await A.$eval('#timesup',e=>e.classList.contains('on')),'paused overlay shown');
   const lockedTry=await A.evaluate(()=>{ const f=window.__ff,S=f.S; const n=S.items.length; return n; }); 
   await ad.click('[data-act=resume]'); await sleep(700); t(T().rounds[1].status==='running','resumed'); t(!(await A.$eval('#timesup',e=>e.classList.contains('on'))),'overlay gone after resume');
+  // ---- judges log in while the round is still running
+  const J1=await page('J1',1300,850), J2=await page('J2',1300,850);
+  await p_role(J1,'roleJudge'); await login(J1,null,'wrong'); t((await txt(J1,'#loginErr'))==='Wrong passcode','judge wrong passcode'); await login(J1,null,'24681357'); t(await vis(J1,'judge'),'judge 1 opens'); t((await txt(J1,'#jgWho'))==='Judge 1','shows Judge 1');
+  await p_role(J2,'roleJudge'); await login(J2,null,'13572468'); t(await vis(J2,'judge')&&(await txt(J2,'#jgWho'))==='Judge 2','judge 2 opens');
+  t((await J1.$eval('#jgBody',e=>e.textContent)).includes('Rating opens when a round ends'),'no rating while the round runs');
   // ---- end round
   await ad.click('[data-act=end]'); await sleep(900); t(await A.$eval('#timesup',e=>e.classList.contains('on')),'time\'s up overlay'); t((await A.$eval('#tuBody',e=>e.textContent)).includes('Please wait, the admin is setting up the next round'),'ended overlay carries wait message');
-  t(await gm.$eval('#gmBar',e=>e.classList.contains('on')),'GM bar visible after round ends'); t((await gm.$eval('#gmBar',e=>e.textContent)).includes('setting up'),'GM bar text');
-  await ad.click('[data-act=gen]'); await sleep(900); t(T().game.phase==='setup','phase setup'); t(await vis(A,'wait')&&(await txt(A,'#waitH'))==='Please wait, the admin is setting up the next round','players see setup message: '+await txt(A,'#waitH')); t(await vis(C,'wait'),'C waits too'); t((await txt(A,'#waitCard')).includes('Round 1 score'),'wait screen shows round result');
+  t(!(await gm.$eval('#gmBar',e=>e.classList.contains('on'))),'GM setup bar stays hidden after a round ends (the show screen says the judges are rating)');
+  // ---- both judges rate; the leaderboard and layouts tabs work
+  t(await waitFor(()=>J1.$('#jgList').then(x=>!!x)),'rating page appears once the round ended'); t(await waitFor(()=>J2.$('#jgList').then(x=>!!x)),'judge 2 sees it too');
+  const names=await J1.$$eval('#jgList button span',e=>e.map(x=>x.textContent.split('\n')[0])); t(names[0].startsWith('Asha'),'first player in the list '+names.join('|'));
+  t(await J1.evaluate(()=>{ const c=document.getElementById('jgCv'); return c&&c.width>100; }),'layout canvas drawn ');
+  t((await J1.$eval('#jgSave',e=>e.disabled)),'save is disabled until a mark is picked');
+  await J1.click('[data-jp="4.5"]'); await J1.click('#jgSave'); await sleep(700); const ua=Object.keys(T().players).find(k=>T().players[k].name==='Asha');
+  t(T().ratings&&T().ratings[1]&&T().ratings[1][ua]&&T().ratings[1][ua].j1.v===4.5,'judge 1 mark saved '+JSON.stringify((T().ratings||{})[1]));
+  t((await J1.$$eval('#jgList button.on span',e=>e[0].textContent)).startsWith('Bo'),'moves on to the next unrated player');
+  await J2.click('[data-jp="3"]'); await J2.click('#jgSave'); await sleep(700); t(T().ratings[1][ua].j2.v===3&&T().ratings[1][ua].j1.v===4.5,'judge 2 mark saved next to judge 1 (nobody overwritten)');
+  await sleep(800); t((await A.$eval('#tuBody',e=>e.textContent)).includes('Your round score'),'A\'s overlay shows the score once both judges rated'); t((await B.$eval('#tuBody',e=>e.textContent)).includes('judges are marking'),'B still waits for judges');
+  await J1.click('.jtabs [data-jt="sb"]'); await sleep(500); t((await J1.$eval('#jgBody',e=>e.textContent)).includes('Asha'),'judge sees the leaderboard');
+  await J1.click('.jtabs [data-jt="lay"]'); await sleep(900); t(await J1.$$eval('#jgBody canvas',e=>e.length>0),'judge sees the layouts');
+  await J1.click('.jtabs [data-jt="rate"]'); await sleep(500); t(await J1.$('#jgList')!==null,'back to rating');
+  const gmTxt=await gm.$eval('#gmBody',e=>e.textContent); await gm.click('.tabs [data-tab=sb]'); await sleep(900); t((await gm.$eval('#gmBody',e=>e.textContent)).includes('Judges are rating'),'GM leaderboard says the judges are still rating');
+  await ad.click('[data-act=gen]'); await sleep(900); t(T().game.phase==='setup','phase setup'); t(await vis(A,'wait')&&(await txt(A,'#waitH'))==='Please wait, the admin is setting up the next round','players see setup message: '+await txt(A,'#waitH')); t(await vis(C,'wait'),'C waits too'); t((await txt(A,'#waitCard')).includes('Round 1 score')&&(await txt(A,'#waitCard')).includes('Round 1 highlights'),'wait screen shows highlights and, once judged, the round score'); t((await txt(B,'#waitCard')).includes('judges are marking'),'unjudged player is told the judges are marking');
   // ---- round 2
   await waitFor(()=>ad.$eval('#rfTarget',e=>+e.value>0).catch(()=>false),20000); await ad.$eval('#rfTarget',e=>e.value=200); await ad.$eval('#rfBudget',e=>e.value=150000); await ad.click('[data-act=start]'); await sleep(900);
   t(T().rounds[2].target===200&&T().rounds[2].budget===150000,'round 2 parameters stored'); t(await waitFor(()=>vis(A,'app')),'A back on game screen for round 2'); t(await A.evaluate(()=>window.Builder.state.round===2&&window.Builder.state.target===200&&window.Builder.state.budget===150000),'builder uses round 2 params'); t(await A.evaluate(()=>window.Builder.state.items.length===0),'round 2 starts empty');

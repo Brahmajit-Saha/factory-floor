@@ -9,7 +9,7 @@
     <button class="btn hz big" id="loginGo" type="submit">Join game</button>
     <div class="err" id="loginErr" role="alert"></div>
   </form>
-  <div class="links"><a id="roleAdmin">Admin</a><a id="roleGm">Game Master</a><a id="rolePlayer" style="display:none">Back to player login</a></div>
+  <div class="links"><a id="roleAdmin">Admin</a><a id="roleGm">Game Master</a><a id="roleJudge">Judge</a><a id="roleDemo">Demo</a><a id="rolePlayer" style="display:none">Back to player login</a></div>
   <p class="hint" style="text-align:center;margin-top:18px" id="modeNote"></p>
 </div></div>
 
@@ -32,6 +32,7 @@
   <div id="waitCard" style="margin-top:18px"></div>
   <div style="margin-top:18px" id="waitWho"></div>
   <div class="links"><a id="waitOut">Sign out</a></div>
+  <section class="rsec"><h3>How to play</h3><div class="rcards" id="rulesWait"></div><div class="rdots" id="rulesWaitDots"></div></section>
 </div></div>
 
 <div id="admin" class="screen page"><div class="admin">
@@ -42,34 +43,78 @@
     <div class="g3">
       <label class="f">Seed (decides the floors)<input id="adSeed" type="text"></label>
       <label class="f">Rounds (5 to 10)<select id="adRounds"></select></label>
-      <label class="f">Floors in the pool<input id="adPool" type="number" min="5" max="20"></label>
       <label class="f">Players per team<input id="adPpt" type="number" min="1" max="8"></label>
     </div>
     <label class="f" id="adTeamsBox">Team names (one per line). Players pick their team from this list.<textarea id="adTeams" placeholder="Team Alpha&#10;Team Beta"></textarea></label>
     <div class="row2"><button class="btn hz" id="adSave">Save setup</button><span class="hint" id="adSaveMsg"></span></div>
-    <p class="hint">With one player per team there is no team list: each player is their own team. Team score is the average of its members' scores. Seed and floors lock once round 1 starts.</p>
+    <p class="hint">With one player per team there is no team list: each player is their own team. Team score is the average of its members' scores. Seed and rounds lock once round 1 starts.</p>
   </div>
 
-  <div class="sec" id="secRound"><h2 id="adRoundH">2 · Rounds</h2>
+  <div class="sec" id="secFloors"><h2>2 · Floor plans</h2>
+    <div id="flBody"></div>
+  </div>
+
+  <div class="sec" id="secRound"><h2 id="adRoundH">3 · Rounds</h2>
     <div id="adRoundBody"></div>
   </div>
 
-  <div class="sec"><h2>3 · Players <span class="pill" id="adCount"></span></h2>
+  <div class="sec"><h2>4 · Players <span class="pill" id="adCount"></span></h2>
     <div style="overflow:auto"><table id="adPlayers"></table></div>
   </div>
 
-  <div class="sec"><h2>4 · Links and reset</h2>
-    <p class="hint">Players open the game page and log in with their college id. The Game Master opens the same page and chooses “Game Master”.</p>
+  <div class="sec"><h2>5 · Links and reset</h2>
+    <p class="hint">Players open the game page and log in with their college id. The Game Master opens the same page and chooses “Game Master”. The two judges choose “Judge” and enter their own passcode (Judge 1: <b>24681357</b>, Judge 2: <b>13572468</b>). After each round they rate every layout from 0 to 5 in steps of 0.5; those marks make up the 10 points for layout and flow.</p>
     <div class="row2"><button class="btn" id="adReset">Reset whole game</button><span class="hint" id="adResetMsg"></span></div>
   </div>
 </div></div>
 
 <div id="gm" class="screen">
   <div class="gmtop">
-    <div class="tabs"><button data-tab="sb" class="on">Scoreboard</button><button data-tab="lv">Live build</button><button data-tab="lay">Layouts</button></div>
+    <div class="tabs"><button data-tab="show" class="on">Show</button><button data-tab="sb">Leaderboard</button><button data-tab="lv">Live build</button><button data-tab="lay">Layouts</button></div>
     <div class="sp"></div><span id="gmRound" style="font-size:18px;color:var(--ink2)"></span>
+    <div class="gmtrucks" id="gmTrucks"><button class="btn hz" data-tr="tIn">Delivery truck</button><button class="btn hz" data-tr="tOut">Shipping truck</button><button class="btn" data-tr="tDown" title="Trucks 10 s sooner">−10 s</button><span class="hint">every <b id="gmTe">60 s</b></span><button class="btn" data-tr="tUp" title="Trucks 10 s later">+10 s</button></div>
     <div class="gmtimer" id="gmTimer"><small id="gmTL">Timer</small><b id="gmTC">--:--</b></div>
     <button class="btn" id="gmOut">Sign out</button></div>
   <div class="gmbar" id="gmBar">The admin is setting up the game. It will resume shortly.</div>
   <div class="gmbody" id="gmBody"></div>
 </div>
+
+<div id="judge" class="screen">
+  <div class="gmtop">
+    <div class="jtabs"><button data-jt="rate" class="on">Rate layouts</button><button data-jt="sb">Leaderboard</button><button data-jt="lay">Layouts</button></div>
+    <div class="sp"></div><span id="jgWho" style="font-size:18px;font-weight:700"></span><span id="jgRound" style="font-size:16px;color:var(--ink2)"></span>
+    <button class="btn" id="jgOut">Sign out</button></div>
+  <div class="gmbody" id="jgBody"></div>
+</div>
+
+<div id="rulesModal" class="rmodal" role="dialog" aria-label="How to play"><div class="rbox">
+  <div class="rhead"><h2>How to play</h2><button class="btn hz" id="rulesClose">Close</button></div>
+  <div class="rcards" id="rulesIn"></div><div class="rdots" id="rulesInDots"></div>
+</div></div>
+<div id="flBig" class="rmodal" role="dialog" aria-label="Floor plan"><div class="rbox">
+  <div class="rhead"><h2 id="flBigT"></h2><button class="btn hz" id="flBigX">Close</button></div>
+  <canvas id="flBigCv"></canvas><p class="hint" id="flBigP"></p>
+</div></div>
+
+<div id="demoSetup" class="rmodal" role="dialog" aria-label="Demo setup"><div class="rbox" style="max-width:640px">
+  <div class="rhead"><h2>Demo setup (test alone)</h2><button class="btn" id="dmCancel">Close</button></div>
+  <div class="dgrid">
+    <label class="f">Seed<input id="dmSeed" type="text"></label>
+    <label class="f">&nbsp;<button class="btn" id="dmNewSeed" type="button" style="height:44px">New random seed</button></label>
+    <label class="f">Rounds<select id="dmRounds"></select></label>
+    <label class="f">Floors in the pool (5 to 20)<input id="dmPool" type="number" min="5" max="20"></label>
+    <label class="f">Team size (factories in use)<select id="dmK"></select></label>
+    <label class="f">Factory<select id="dmFactory"></select></label>
+    <label class="f">Round<select id="dmRound"></select></label>
+    <label class="f">Floor<select id="dmLay"></select></label>
+    <label class="f">Target override (units/min, max 1,000)<input id="dmTarget" type="number" min="10" max="1000" step="10"></label>
+    <label class="f">Budget override (₹, max 5,00,000)<input id="dmBudget" type="number" min="1000" max="500000" step="1000"></label>
+  </div>
+  <p class="hint">Leave target and budget empty to use the automatic values worked out from the floors. Floor “Automatic” uses the normal rotation across rounds and factories.</p>
+  <h3 style="margin:14px 0 8px;font-size:14px">Round timer</h3>
+  <div class="dgrid"><label class="f">Time per round (minutes, 1 to 60)<input id="dmMin" type="number" min="1" max="60" step="1"></label><label class="f">Status<input id="dmStatus" type="text" readonly></label></div>
+  <div class="row2" style="margin-top:10px"><button class="btn hz" id="dmStart" type="button">Start</button><button class="btn" id="dmPause" type="button">Pause</button><button class="btn" id="dmAdd1" type="button">+1 min</button><button class="btn" id="dmAdd5" type="button">+5 min</button><button class="btn" id="dmEnd" type="button">End now</button><button class="btn" id="dmReset" type="button">Reset</button></div>
+  <div class="row2" style="margin-top:10px"><span class="hint">Trucks every <b id="dmTe">60 s</b></span><button class="btn" id="dmTDown" type="button">−10 s</button><button class="btn" id="dmTUp" type="button">+10 s</button><button class="btn hz" id="dmTIn" type="button">Send delivery truck</button><button class="btn hz" id="dmTOut" type="button">Send shipping truck</button></div>
+  <p class="hint">Building is open while the timer is not started. At zero the layout locks as it stands; adding time re-opens it. Demo mode runs only in this browser: nothing is sent to the database, so it never touches a live game.</p>
+  <div class="row2" style="justify-content:flex-end;margin-top:12px"><button class="btn hz" id="dmApply" type="button">Load floor</button></div>
+</div></div>
