@@ -173,7 +173,7 @@ window.addEventListener('beforeunload',()=>{ try{ Builder.flush(); }catch(x){} }
 
 /* ---------- admin ---------- */
 const AD=['meta','game','rounds','trucks','ratings','players','scores'];
-function startAdmin(){ show('admin'); $('adRounds').innerHTML=[5,6,7,8,9,10].map(n=>'<option>'+n+'</option>').join(''); ST.adDirty=false; ST.adKey=''; subscribe(AD,renderAdmin); }
+function startAdmin(){ show('admin'); $('adRounds').innerHTML=[2,3,4,5,6,7,8,9,10].map(n=>'<option>'+n+'</option>').join(''); ST.adDirty=false; ST.adKey=''; subscribe(AD,renderAdmin); }
 function parseTeams(text,old){
   const names=text.split(/\n/).map(x=>x.trim()).filter(Boolean); const seen={}; const out={}; let mx=0;
   Object.keys(old||{}).forEach(id=>{ mx=Math.max(mx,+id.slice(1)||0); });
@@ -191,7 +191,7 @@ function fillSetup(force){
 }
 ['adSeed','adRounds','adPpt','adTeams'].forEach(id=>$(id).addEventListener('input',()=>{ ST.adDirty=true; $('adTeamsBox').style.display=(+$('adPpt').value>1)?'':'none'; $('adSaveMsg').textContent=''; }));
 $('adSave').onclick=async()=>{
-  const seed=($('adSeed').value||'').trim()||'OPS-1', rounds=Math.max(5,Math.min(10,+$('adRounds').value||6)), ppt=Math.max(1,Math.min(8,+$('adPpt').value||1));
+  const seed=($('adSeed').value||'').trim()||'OPS-1', rounds=Math.max(2,Math.min(10,+$('adRounds').value||6)), ppt=Math.max(1,Math.min(8,+$('adPpt').value||1));
   const teams=parseTeams($('adTeams').value,(ST.meta&&ST.meta.teams)||{});
   if(ppt>1&&!Object.keys(teams).length){ $('adSaveMsg').textContent='Add at least one team name, one per line.'; $('adSaveMsg').className='hint badc'; return; }
   const old=ST.meta||{}, keep=old.seed===seed&&old.rounds===rounds&&old.ppt===ppt;
@@ -465,7 +465,7 @@ $('dmMin').onchange=()=>{ const v=Math.max(1,Math.min(60,Math.round(+$('dmMin').
 function dmFill(){
   const opt=(a,sel)=>a.map(([v,l])=>'<option value="'+v+'"'+(String(v)===String(sel)?' selected':'')+'>'+l+'</option>').join('');
   $('dmSeed').value=DM.seed; $('dmPool').value=DM.pool; $('dmMin').value=DM.minutes; $('dmTarget').value=DM.target||''; $('dmBudget').value=DM.budget||'';
-  $('dmRounds').innerHTML=opt([5,6,7,8,9,10].map(n=>[n,n]),DM.rounds); $('dmK').innerHTML=opt([1,2,3,4].map(n=>[n,n]),DM.K);
+  $('dmRounds').innerHTML=opt([2,3,4,5,6,7,8,9,10].map(n=>[n,n]),DM.rounds); $('dmK').innerHTML=opt([1,2,3,4].map(n=>[n,n]),DM.K);
   dmDeps();
 }
 function dmDeps(){ // factory, round and floor lists follow rounds, team size and pool
@@ -480,7 +480,7 @@ $('dmCancel').onclick=()=>$('demoSetup').classList.remove('on');
 $('demoSetup').addEventListener('click',e=>{ if(e.target===$('demoSetup')) $('demoSetup').classList.remove('on'); });
 $('dmApply').onclick=()=>{
   const clamp=(v,a,b,d)=>Math.max(a,Math.min(b,Math.round(+v)||d));
-  DM.seed=($('dmSeed').value||'').trim()||'OPS-1'; DM.rounds=clamp($('dmRounds').value,5,10,6); DM.pool=clamp($('dmPool').value,5,20,12); DM.K=clamp($('dmK').value,1,4,4);
+  DM.seed=($('dmSeed').value||'').trim()||'OPS-1'; DM.rounds=clamp($('dmRounds').value,2,10,6); DM.pool=clamp($('dmPool').value,5,20,12); DM.K=clamp($('dmK').value,1,4,4);
   DM.fi=Math.min(DM.K-1,clamp($('dmFactory').value,0,3,0)); DM.round=Math.min(DM.rounds,clamp($('dmRound').value,1,10,1)); DM.lay=Math.min(DM.pool,clamp($('dmLay').value,0,20,0));
   const tg=Math.round(+$('dmTarget').value), bu=Math.round(+$('dmBudget').value); DM.target=tg>=10?Math.min(1000,tg):null; DM.budget=bu>=1000?Math.min(500000,bu):null;
   dmLoadFloor(true); $('demoSetup').classList.remove('on'); dmTick();
